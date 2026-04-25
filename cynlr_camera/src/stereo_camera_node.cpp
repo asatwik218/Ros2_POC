@@ -46,9 +46,9 @@ CallbackReturn StereoCameraNode::on_configure(const rclcpp_lifecycle::State&) {
     const std::string cal_url = this->get_parameter("calibration_url").as_string();
 
     cinfo_left_  = std::make_shared<camera_info_manager::CameraInfoManager>(
-        this->get_node_base_interface().get(), ns + "_left", cal_url);
+        this, ns + "_left", cal_url);
     cinfo_right_ = std::make_shared<camera_info_manager::CameraInfoManager>(
-        this->get_node_base_interface().get(), ns + "_right", cal_url);
+        this, ns + "_right", cal_url);
 
     const auto reliable_qos = rclcpp::QoS(1).reliable();
     const auto image_qos    = rclcpp::QoS(1).best_effort().durability_volatile();

@@ -1,0 +1,4 @@
+[submodule "flexiv_description"]
+	path = flexiv_description
+	url = https://github.com/flexivrobotics/flexiv_description.git
+	branch = humble

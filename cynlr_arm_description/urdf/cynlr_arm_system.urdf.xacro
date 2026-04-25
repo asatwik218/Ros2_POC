@@ -31,9 +31,10 @@
     prefix="arm_left_"
     serial_number="$(arg sn_left)"
     vendor="$(arg vendor)"
-    parent="world">
-    <origin xyz="-0.5 0.0 0.9" rpy="0 0 0"/>
-  </xacro:cynlr_rizon7>
+    parent="world"
+    origin_xyz="-0.5 0.0 0.9"
+    origin_rpy="0 0 0"
+  />
 
   <!-- ------------------------------------------------------------------ -->
   <!-- Center arm — mounted directly above, facing forward                 -->
@@ -42,20 +43,21 @@
     prefix="arm_center_"
     serial_number="$(arg sn_center)"
     vendor="$(arg vendor)"
-    parent="world">
-    <origin xyz="0.0 0.0 1.2" rpy="0 0 0"/>
-  </xacro:cynlr_rizon7>
+    parent="world"
+    origin_xyz="0.0 0.0 1.2"
+    origin_rpy="0 0 0"
+  />
 
   <!-- ------------------------------------------------------------------ -->
-  <!-- Right arm — mounted at +0.5m on the X axis, rotated 180° to face   -->
-  <!-- the same workspace as the left arm                                  -->
+  <!-- Right arm — mounted at +0.5m on the X axis, rotated 180°           -->
   <!-- ------------------------------------------------------------------ -->
   <xacro:cynlr_rizon7
     prefix="arm_right_"
     serial_number="$(arg sn_right)"
     vendor="$(arg vendor)"
-    parent="world">
-    <origin xyz="0.5 0.0 0.9" rpy="0 0 3.14159265"/>
-  </xacro:cynlr_rizon7>
+    parent="world"
+    origin_xyz="0.5 0.0 0.9"
+    origin_rpy="0 0 3.14159265"
+  />
 
 </robot>

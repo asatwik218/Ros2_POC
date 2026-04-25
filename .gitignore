@@ -65,9 +65,6 @@ Testing/
 # Jupyter
 .ipynb_checkpoints/
 
-# Claude Code internal files
-.claude/
-
 # Miscellaneous
 *.bak
 *.tmp

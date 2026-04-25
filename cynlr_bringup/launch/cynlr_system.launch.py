@@ -69,7 +69,7 @@ def generate_launch_description():
     robot_description_content = ParameterValue(
         Command(
             [
-                PathJoinSubstitution([FindExecutable(name="xacro")]),
+                FindExecutable(name="xacro"),
                 " ",
                 cynlr_urdf_xacro,
                 " sn_left:=",    sn_left,
@@ -92,7 +92,7 @@ def generate_launch_description():
     robot_description_semantic_content = ParameterValue(
         Command(
             [
-                PathJoinSubstitution([FindExecutable(name="xacro")]),
+                FindExecutable(name="xacro"),
                 " ",
                 cynlr_srdf_xacro,
             ]

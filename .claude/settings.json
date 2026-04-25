@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/SatwikAgarwal/Documents/cynlr_software/cynlr_modbus/**)"
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(conda run:*)",
+      "Bash(ls /home/satwikagarwal/cynlr_cmake/tl* 2>/dev/null || echo \"still missing\")",
+      "Bash(rm -rf /mnt/c/Users/SatwikAgarwal/Documents/cynlr_software/Cpp_App_Test/build/cynlr_arm_service)",
+      "Read(//mnt/c/Users/SatwikAgarwal/Documents/cynlr_software/Cpp_App_Test/**)",
+      "Bash(source /opt/ros/jazzy/setup.bash)",
+      "Bash(colcon build:*)",
+      "Bash(cd /mnt/c/Users/SatwikAgarwal/Documents/cynlr_software/Cpp_App_Test && source /opt/ros/jazzy/setup.bash && PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages colcon build --packages-select cynlr_arm_service --cmake-args -DCMAKE_PREFIX_PATH=/home/satwikagarwal/cynlr_cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON 2>&1)",
+      "Bash(rm -rf /mnt/c/Users/SatwikAgarwal/Documents/cynlr_software/Cpp_App_Test/build/cynlr_arm_service && cd /mnt/c/Users/SatwikAgarwal/Documents/cynlr_software/Cpp_App_Test && source /opt/ros/jazzy/setup.bash && colcon build --packages-select cynlr_arm_service --cmake-args -DCMAKE_PREFIX_PATH=/home/satwikagarwal/cynlr_cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON -DPython3_EXECUTABLE=/usr/bin/python3 2>&1)",
+      "Bash(find /home/satwikagarwal/.conan2/p -name \"libfastdds.so*\" 2>/dev/null | head -5)",
+      "Bash(find /home/satwikagarwal/.conan2/p -path \"*/p/lib/libssl*\" -o -path \"*/p/lib/libcrypto*\" 2>/dev/null | grep -v \"/b/\" | sort)",
+      "Bash(find /home/satwikagarwal/.conan2/p/flexi5fab541d3cfd5/p -name \"*.cmake\" 2>/dev/null | head -20)",
+      "Bash(apt-cache show:*)"
+    ]
+  }
+}
