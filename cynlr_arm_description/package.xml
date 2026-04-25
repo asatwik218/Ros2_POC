@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>cynlr_arm_description</name>
+  <version>0.1.0</version>
+  <description>URDF/xacro description for the CynLR three-arm robot system</description>
+  <maintainer email="satwik.agarwal@cynlr.com">Satwik Agarwal</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- flexiv_description provides the Rizon arm kinematic macro (links, joints, meshes).
+       Clone from: https://github.com/flexivrobotics/flexiv_description (branch: humble) -->
+  <depend>flexiv_description</depend>
+  <depend>xacro</depend>
+  <depend>robot_state_publisher</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

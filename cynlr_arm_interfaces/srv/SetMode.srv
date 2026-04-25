@@ -1,0 +1,11 @@
+# Target mode
+# 0 = NRT (non-real-time), 1 = JOINT_POSITION, 2 = JOINT_TORQUE, 3 = CARTESIAN_MOTION_FORCE
+uint8 mode
+
+uint8 MODE_NRT=0
+uint8 MODE_JOINT_POSITION=1
+uint8 MODE_JOINT_TORQUE=2
+uint8 MODE_CARTESIAN_MOTION_FORCE=3
+---
+bool success
+string message

@@ -1,0 +1,10 @@
+stereo_camera_node:
+  ros__parameters:
+    camera_index: 0
+    publish_rate: 30.0
+    # frame_id_left / frame_id_right default to camera_{index}_{side}_optical
+    # Override if your TF tree uses different frame names.
+    frame_id_left: ""
+    frame_id_right: ""
+    # calibration_url: "file:///path/to/camera_0_left.yaml"
+    calibration_url: ""

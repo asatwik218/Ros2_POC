@@ -1,0 +1,54 @@
+# moveit_controllers.yaml
+# Maps MoveIt planning groups to ros2_control JointTrajectoryControllers.
+#
+# To use an arm in MoveIt, its arm_*_jt_controller must be the active
+# controller for that arm (not one of the escape hatches).
+#
+# Switch back to JTC if an escape hatch is active:
+#   ros2 control switch_controllers \
+#     --activate arm_left_jt_controller \
+#     --deactivate arm_left_direct_cmd arm_left_nrt arm_left_cartesian
+
+controller_names:
+  - arm_left_jt_controller
+  - arm_center_jt_controller
+  - arm_right_jt_controller
+
+arm_left_jt_controller:
+  action_ns: follow_joint_trajectory
+  type: FollowJointTrajectory
+  default: true
+  joints:
+    - arm_left_joint1
+    - arm_left_joint2
+    - arm_left_joint3
+    - arm_left_joint4
+    - arm_left_joint5
+    - arm_left_joint6
+    - arm_left_joint7
+
+arm_center_jt_controller:
+  action_ns: follow_joint_trajectory
+  type: FollowJointTrajectory
+  default: true
+  joints:
+    - arm_center_joint1
+    - arm_center_joint2
+    - arm_center_joint3
+    - arm_center_joint4
+    - arm_center_joint5
+    - arm_center_joint6
+    - arm_center_joint7
+
+arm_right_jt_controller:
+  action_ns: follow_joint_trajectory
+  type: FollowJointTrajectory
+  default: true
+  joints:
+    - arm_right_joint1
+    - arm_right_joint2
+    - arm_right_joint3
+    - arm_right_joint4
+    - arm_right_joint5
+    - arm_right_joint6
+    - arm_right_joint7

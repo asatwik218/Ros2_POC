@@ -1,0 +1,15 @@
+# Goal
+# Target TCP pose: [x, y, z, qw, qx, qy, qz]
+float64[7] target_pose
+float64 max_linear_vel      # m/s,   0 = use default
+float64 max_angular_vel     # rad/s, 0 = use default
+float64 max_linear_acc      # m/s^2, 0 = use default
+---
+# Result
+bool success
+string message
+float64[7] final_pose       # actual TCP pose at completion
+---
+# Feedback
+float64[7] current_pose     # current TCP pose during motion
+float64 distance_remaining  # Euclidean distance to target, m

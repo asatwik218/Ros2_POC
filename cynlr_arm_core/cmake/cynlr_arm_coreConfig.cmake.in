@@ -1,0 +1,8 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(spdlog)
+# flexiv_rdk and tl-expected are absorbed into the installed library/headers
+
+include("${CMAKE_CURRENT_LIST_DIR}/cynlr_arm_coreTargets.cmake")
+check_required_components(cynlr_arm_core)

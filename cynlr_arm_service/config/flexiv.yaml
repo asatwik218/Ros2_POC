@@ -1,0 +1,15 @@
+/**:
+  ros__parameters:
+    vendor: "flexiv"
+    serial_number: "Rizon4s-BYysH5"
+    ip_address: ""   # empty = RDK auto-discovers on all interfaces
+    num_joints: 7
+
+    rt:
+      cycle_time_us: 1000      # 1kHz
+      cpu_affinity: 5          # pin to isolated core (update for your machine)
+      scheduler: "fifo"
+      priority: 90
+      command_timeout_ms: 100
+
+    state_publish_rate: 100.0  # Hz

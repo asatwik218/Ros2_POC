@@ -1,0 +1,74 @@
+# colcon build artifacts
+build/
+install/
+log/
+
+# Conan / package build outputs inside source packages
+cynlr_arm_core/build/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+!**/cmake/*.cmake
+
+# Compiled binaries and libraries
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Python virtual envs / eggs
+*.egg-info/
+.eggs/
+venv/
+.venv/
+
+# IDE / editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Generated ROS2 message code (in source packages — remove if you want to commit them)
+# Keeping these out avoids committing generated headers that change with each build.
+# Uncomment if you want to exclude:
+# **/rosidl_generator_*
+# **/rosidl_typesupport_*
+
+# Conan
+.conan/
+conan.lock
+conanbuildinfo.*
+conaninfo.txt
+graph_info.json
+
+# Test results
+test_results/
+Testing/
+*.gcov
+*.gcda
+*.gcno
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Claude Code internal files
+.claude/
+
+# Miscellaneous
+*.bak
+*.tmp
+*.orig

@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>cynlr_camera</name>
+  <version>0.1.0</version>
+  <description>Stereo camera lifecycle nodes for the CynLR system</description>
+  <maintainer email="satwik.agarwal@cynlr.com">Satwik Agarwal</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>sensor_msgs</depend>
+  <depend>image_transport</depend>
+  <depend>camera_info_manager</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

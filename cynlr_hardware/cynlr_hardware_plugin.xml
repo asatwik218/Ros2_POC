@@ -1,0 +1,12 @@
+<library path="cynlr_hardware">
+  <class name="cynlr_hardware/CynlrHardwareInterface"
+         type="cynlr_hardware::CynlrHardwareInterface"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      ros2_control hardware interface for CynLR robot arms. Wraps cynlr_arm_core's
+      ArmInterface, supporting Flexiv Rizon 7-DOF arms and the SimArm mock backend.
+      Exposes position, velocity, effort, Cartesian, FT sensor, TCP pose, and GPIO
+      interfaces. Vendor and connection parameters are read from URDF hardware params.
+    </description>
+  </class>
+</library>

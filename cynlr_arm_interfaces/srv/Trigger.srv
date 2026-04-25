@@ -1,0 +1,5 @@
+# Generic trigger — used for enable, stop, clear_fault, disconnect,
+# zero_ft_sensor, run_auto_recovery
+---
+bool success
+string message

@@ -1,0 +1,14 @@
+# Goal — point-to-point Cartesian move (via IK internally in arm SDK)
+# Target TCP pose: [x, y, z, qw, qx, qy, qz]
+float64[7] target_pose
+float64 max_joint_vel         # rad/s, 0 = use default
+float64 max_joint_acc         # rad/s^2, 0 = use default
+---
+# Result
+bool success
+string message
+float64[7] final_pose
+---
+# Feedback
+float64[7] current_pose
+float64 distance_remaining    # m

@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>cynlr_arm_service</name>
+  <version>0.1.0</version>
+  <description>CynLR robot arm ROS2 service node</description>
+  <maintainer email="satwik.agarwal@cynlr.com">Satwik Agarwal</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>cynlr_arm_interfaces</depend>
+
+  <!-- cynlr_arm_core is a Conan package — linked via CMake find_package, not ament -->
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>launch_testing_ament_cmake</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

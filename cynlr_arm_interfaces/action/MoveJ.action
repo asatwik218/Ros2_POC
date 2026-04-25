@@ -1,0 +1,13 @@
+# Goal
+float64[7] target_positions  # rad
+float64 max_joint_vel         # rad/s, 0 = use default
+float64 max_joint_acc         # rad/s^2, 0 = use default
+---
+# Result
+bool success
+string message
+float64[7] final_positions    # actual joint positions at completion
+---
+# Feedback
+float64[7] current_positions  # current joint positions during motion
+float64[7] position_error     # target - current, rad

@@ -1,0 +1,7 @@
+string vendor          # "flexiv" or "sim"
+string serial_number
+string ip_address
+int32 num_joints       # default 7
+---
+bool success
+string message

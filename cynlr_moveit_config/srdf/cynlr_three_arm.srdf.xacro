@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  cynlr_three_arm.srdf.xacro
+  Top-level SRDF for the CynLR three-arm system.
+
+  Instantiates one SRDF macro per arm, adds an all_arms group for
+  coordinated multi-arm planning, and disables inter-arm collisions
+  between bases and lower links (which can never reach each other).
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="cynlr_three_arm">
+
+  <xacro:include filename="$(find cynlr_moveit_config)/srdf/cynlr_rizon7_macro.srdf.xacro"/>
+
+  <!-- Left arm — provides the single world virtual joint -->
+  <xacro:cynlr_rizon7_srdf prefix="arm_left_"   use_virtual_joint="true"/>
+
+  <!-- Center arm — shares the same world frame; no duplicate virtual joint -->
+  <xacro:cynlr_rizon7_srdf prefix="arm_center_" use_virtual_joint="false"/>
+
+  <!-- Right arm -->
+  <xacro:cynlr_rizon7_srdf prefix="arm_right_"  use_virtual_joint="false"/>
+
+  <!-- ── All-arms coordinated planning group ────────────────────────────── -->
+  <!-- Allows MoveIt to plan for all three arms simultaneously with          -->
+  <!-- inter-arm collision avoidance.                                        -->
+  <group name="all_arms">
+    <group name="arm_left_arm"/>
+    <group name="arm_center_arm"/>
+    <group name="arm_right_arm"/>
+  </group>
+
+  <!-- ── Inter-arm collision suppression ───────────────────────────────── -->
+  <!-- Bases are bolted to the same frame and cannot collide.               -->
+  <disable_collisions link1="arm_left_base_link"   link2="arm_center_base_link" reason="Never"/>
+  <disable_collisions link1="arm_left_base_link"   link2="arm_right_base_link"  reason="Never"/>
+  <disable_collisions link1="arm_center_base_link" link2="arm_right_base_link"  reason="Never"/>
+
+  <!-- Lower links between arms that geometrically cannot reach each other  -->
+  <disable_collisions link1="arm_left_link1"   link2="arm_center_link1"  reason="Never"/>
+  <disable_collisions link1="arm_left_link1"   link2="arm_right_link1"   reason="Never"/>
+  <disable_collisions link1="arm_center_link1" link2="arm_right_link1"   reason="Never"/>
+
+  <disable_collisions link1="arm_left_base_link"   link2="arm_center_link1"  reason="Never"/>
+  <disable_collisions link1="arm_left_base_link"   link2="arm_right_link1"   reason="Never"/>
+  <disable_collisions link1="arm_center_base_link" link2="arm_left_link1"    reason="Never"/>
+  <disable_collisions link1="arm_center_base_link" link2="arm_right_link1"   reason="Never"/>
+  <disable_collisions link1="arm_right_base_link"  link2="arm_left_link1"    reason="Never"/>
+  <disable_collisions link1="arm_right_base_link"  link2="arm_center_link1"  reason="Never"/>
+
+</robot>

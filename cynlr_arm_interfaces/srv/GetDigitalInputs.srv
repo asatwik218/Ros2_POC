@@ -1,0 +1,6 @@
+# Flexiv: 18 digital inputs (indices 0-17)
+# Empty request — returns all inputs
+---
+bool success
+string message
+bool[] values

@@ -1,0 +1,218 @@
+<?xml version="1.0"?>
+<!--
+  cynlr_rizon7_macro.urdf.xacro
+  Macro for a single CynLR Rizon-7 arm with ros2_control block.
+
+  Parameters:
+    prefix        – joint/link name prefix, e.g. "arm_left_"
+    serial_number – Flexiv serial number (or empty string for sim)
+    vendor        – "flexiv" or "sim"
+    parent        – name of the parent link to attach the arm base to
+    *origin       – <origin xyz="..." rpy="..."/> block for base placement
+
+  Requires flexiv_description to be present in the workspace.
+  Clone: https://github.com/flexivrobotics/flexiv_description  (branch: humble)
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="cynlr_rizon7"
+               params="prefix serial_number vendor parent *origin">
+
+    <!-- ------------------------------------------------------------------ -->
+    <!-- Arm kinematics — provided by flexiv_description                     -->
+    <!-- ------------------------------------------------------------------ -->
+    <xacro:include filename="$(find flexiv_description)/urdf/rizon7_macro.urdf.xacro"/>
+
+    <xacro:rizon7 prefix="${prefix}" parent="${parent}">
+      <xacro:insert_block name="origin"/>
+    </xacro:rizon7>
+
+    <!-- ------------------------------------------------------------------ -->
+    <!-- ros2_control block — one hardware plugin instance per arm           -->
+    <!--                                                                     -->
+    <!-- All 7 joints expose position + velocity + effort command and state  -->
+    <!-- interfaces. Additional sensor/gpio blocks expose FT, TCP, cartesian,-->
+    <!-- and GPIO interfaces (handled inside CynlrHardwareInterface).        -->
+    <!-- ------------------------------------------------------------------ -->
+    <ros2_control name="${prefix}system" type="system">
+
+      <hardware>
+        <plugin>cynlr_hardware/CynlrHardwareInterface</plugin>
+        <param name="prefix">${prefix}</param>
+        <param name="vendor">${vendor}</param>
+        <param name="serial_number">${serial_number}</param>
+        <!-- ip_address is optional; leave empty for auto-discovery -->
+        <param name="ip_address"></param>
+      </hardware>
+
+      <!-- 7-DOF arm joints -->
+      <joint name="${prefix}joint1">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <command_interface name="effort"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}joint2">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <command_interface name="effort"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}joint3">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <command_interface name="effort"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}joint4">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <command_interface name="effort"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}joint5">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <command_interface name="effort"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}joint6">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <command_interface name="effort"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}joint7">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <command_interface name="effort"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+
+      <!-- FT sensor state interfaces (raw + ext_tcp + ext_world, 6 channels each) -->
+      <sensor name="${prefix}ft_sensor">
+        <state_interface name="raw_0"/>
+        <state_interface name="raw_1"/>
+        <state_interface name="raw_2"/>
+        <state_interface name="raw_3"/>
+        <state_interface name="raw_4"/>
+        <state_interface name="raw_5"/>
+        <state_interface name="ext_tcp_0"/>
+        <state_interface name="ext_tcp_1"/>
+        <state_interface name="ext_tcp_2"/>
+        <state_interface name="ext_tcp_3"/>
+        <state_interface name="ext_tcp_4"/>
+        <state_interface name="ext_tcp_5"/>
+        <state_interface name="ext_world_0"/>
+        <state_interface name="ext_world_1"/>
+        <state_interface name="ext_world_2"/>
+        <state_interface name="ext_world_3"/>
+        <state_interface name="ext_world_4"/>
+        <state_interface name="ext_world_5"/>
+      </sensor>
+
+      <!-- TCP pose (7) and velocity (6) state interfaces -->
+      <sensor name="${prefix}tcp">
+        <state_interface name="pose_0"/>
+        <state_interface name="pose_1"/>
+        <state_interface name="pose_2"/>
+        <state_interface name="pose_3"/>
+        <state_interface name="pose_4"/>
+        <state_interface name="pose_5"/>
+        <state_interface name="pose_6"/>
+        <state_interface name="vel_0"/>
+        <state_interface name="vel_1"/>
+        <state_interface name="vel_2"/>
+        <state_interface name="vel_3"/>
+        <state_interface name="vel_4"/>
+        <state_interface name="vel_5"/>
+      </sensor>
+
+      <!-- Full ArmState pointer (for CynlrStateBroadcaster bit_cast trick) -->
+      <sensor name="${prefix}cynlr_arm_state">
+        <state_interface name="full_state_ptr"/>
+      </sensor>
+
+      <!-- Raw ArmInterface pointer (for CynlrNrtPassthroughController) -->
+      <sensor name="${prefix}cynlr_arm_ctrl">
+        <state_interface name="arm_interface_ptr"/>
+      </sensor>
+
+      <!-- Cartesian command interface (escape hatch #3) -->
+      <gpio name="${prefix}cartesian_cmd">
+        <command_interface name="pose_0"/>
+        <command_interface name="pose_1"/>
+        <command_interface name="pose_2"/>
+        <command_interface name="pose_3"/>
+        <command_interface name="pose_4"/>
+        <command_interface name="pose_5"/>
+        <command_interface name="pose_6"/>
+        <command_interface name="wrench_0"/>
+        <command_interface name="wrench_1"/>
+        <command_interface name="wrench_2"/>
+        <command_interface name="wrench_3"/>
+        <command_interface name="wrench_4"/>
+        <command_interface name="wrench_5"/>
+      </gpio>
+
+      <!-- 18-port digital GPIO -->
+      <gpio name="${prefix}gpio">
+        <!-- Outputs (command) -->
+        <command_interface name="out_0"/>
+        <command_interface name="out_1"/>
+        <command_interface name="out_2"/>
+        <command_interface name="out_3"/>
+        <command_interface name="out_4"/>
+        <command_interface name="out_5"/>
+        <command_interface name="out_6"/>
+        <command_interface name="out_7"/>
+        <command_interface name="out_8"/>
+        <command_interface name="out_9"/>
+        <command_interface name="out_10"/>
+        <command_interface name="out_11"/>
+        <command_interface name="out_12"/>
+        <command_interface name="out_13"/>
+        <command_interface name="out_14"/>
+        <command_interface name="out_15"/>
+        <command_interface name="out_16"/>
+        <command_interface name="out_17"/>
+        <!-- Inputs (state) -->
+        <state_interface name="in_0"/>
+        <state_interface name="in_1"/>
+        <state_interface name="in_2"/>
+        <state_interface name="in_3"/>
+        <state_interface name="in_4"/>
+        <state_interface name="in_5"/>
+        <state_interface name="in_6"/>
+        <state_interface name="in_7"/>
+        <state_interface name="in_8"/>
+        <state_interface name="in_9"/>
+        <state_interface name="in_10"/>
+        <state_interface name="in_11"/>
+        <state_interface name="in_12"/>
+        <state_interface name="in_13"/>
+        <state_interface name="in_14"/>
+        <state_interface name="in_15"/>
+        <state_interface name="in_16"/>
+        <state_interface name="in_17"/>
+      </gpio>
+
+    </ros2_control>
+
+  </xacro:macro>
+
+</robot>

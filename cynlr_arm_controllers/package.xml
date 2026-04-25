@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>cynlr_arm_controllers</name>
+  <version>0.1.0</version>
+  <description>Custom ros2_control controller plugins for CynLR robot arms</description>
+  <maintainer email="satwik.agarwal@cynlr.com">Satwik Agarwal</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>rclcpp_action</depend>
+  <depend>controller_interface</depend>
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>realtime_tools</depend>
+  <depend>geometry_msgs</depend>
+  <depend>cynlr_arm_interfaces</depend>
+
+  <!-- cynlr_arm_core is a Conan package — linked via CMake find_package, not ament -->
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

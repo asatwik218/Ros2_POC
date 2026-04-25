@@ -1,0 +1,6 @@
+# Flexiv: 18 digital outputs (indices 0-17)
+uint8[] indices
+bool[] values
+---
+bool success
+string message

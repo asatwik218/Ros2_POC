@@ -1,0 +1,7 @@
+float64 mass_kg
+float64[3] com                # centre of mass, m
+float64[6] inertia            # kg*m^2
+float64[7] tcp_pose           # [x, y, z, qw, qx, qy, qz] m / unit quaternion
+---
+bool success
+string message

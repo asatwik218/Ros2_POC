@@ -1,0 +1,20 @@
+# Switch controllers on a specific arm's controller manager.
+# Mirrors ros2_control's SwitchController service but with a friendlier interface
+# and per-arm routing so callers don't need to specify controller-manager namespaces.
+
+# Arm to target: "left", "center", or "right"
+string arm
+
+# Controller names to activate / deactivate (empty list = no change)
+string[] activate
+string[] deactivate
+
+# How strictly to enforce the switch:
+#   0 = BEST_EFFORT  (partial success allowed)
+#   1 = STRICT       (all-or-nothing)
+uint8 strictness
+
+---
+
+bool success
+string message
