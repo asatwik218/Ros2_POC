@@ -1,46 +1,164 @@
+import os
+import subprocess
+import tempfile
+
+import yaml
+from ament_index_python.packages import get_package_share_directory
+
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    OpaqueFunction,
     RegisterEventHandler,
 )
 from launch.conditions import IfCondition
-from launch.event_handlers import OnProcessExit
+from launch.event_handlers import OnProcessExit, OnShutdown
+from launch.actions import EmitEvent
+from launch.events import Shutdown
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterFile, ParameterValue
-from launch_ros.substitutions import FindPackageShare
-from launch.substitutions import (
-    Command,
-    FindExecutable,
-    LaunchConfiguration,
-    PathJoinSubstitution,
-)
+from launch_ros.parameter_descriptions import ParameterFile
+from launch.substitutions import LaunchConfiguration
 
+
+# ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
+
+def load_system_config(config_path: str) -> dict:
+    with open(config_path) as f:
+        return yaml.safe_load(f)
+
+
+def generate_urdf(config: dict) -> str:
+    """Build a top-level xacro from config, run xacro, return URDF string."""
+    macro_path = os.path.join(
+        get_package_share_directory("cynlr_arm_description"),
+        "urdf", "cynlr_rizon7_macro.urdf.xacro"
+    )
+
+    arms_xml = ""
+    for arm in config["arms"]:
+        xyz  = " ".join(str(v) for v in arm["mount"]["xyz"])
+        rpy  = " ".join(str(v) for v in arm["mount"]["rpy"])
+        tool = arm.get("tool", {})
+        com      = " ".join(str(v) for v in tool.get("com",      [0.0, 0.0, 0.0]))
+        inertia  = " ".join(str(v) for v in tool.get("inertia",  [0.0] * 6))
+        tcp_pose = " ".join(str(v) for v in tool.get("tcp_pose", [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
+        arms_xml += f"""
+  <xacro:cynlr_rizon7
+    prefix="{arm['name']}_"
+    serial_number="{arm['serial_number']}"
+    vendor="{arm['vendor']}"
+    parent="world"
+    origin_xyz="{xyz}"
+    origin_rpy="{rpy}"
+    tool_mass_kg="{tool.get('mass_kg', 0.0)}"
+    tool_com="{com}"
+    tool_inertia="{inertia}"
+    tool_tcp_pose="{tcp_pose}"
+  />"""
+
+    xacro_str = f"""<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="cynlr_arm_system">
+  <xacro:include filename="{macro_path}"/>
+  <link name="world"/>
+{arms_xml}
+</robot>"""
+
+    with tempfile.NamedTemporaryFile(suffix=".urdf.xacro", mode="w", delete=False) as tf:
+        tf.write(xacro_str)
+        tf_path = tf.name
+
+    try:
+        result = subprocess.run(
+            ["xacro", tf_path],
+            capture_output=True, text=True, check=True
+        )
+        return result.stdout
+    finally:
+        os.unlink(tf_path)
+
+
+def generate_controller_yaml(config: dict) -> str:
+    """Generate the full controller_manager YAML from config and return as string."""
+    update_rate = config["system"]["update_rate"]
+
+    cm: dict = {
+        "controller_manager": {
+            "ros__parameters": {
+                "update_rate": update_rate,
+                "joint_state_broadcaster": {
+                    "type": "joint_state_broadcaster/JointStateBroadcaster"
+                },
+            }
+        }
+    }
+
+    for arm in config["arms"]:
+        n = arm["name"]
+        ros_params = cm["controller_manager"]["ros__parameters"]
+
+        ros_params[f"{n}_state_broadcaster"] = {
+            "type": "cynlr_state_broadcaster/CynlrStateBroadcaster"
+        }
+        ros_params[f"{n}_services"] = {
+            "type": "cynlr_arm_services/CynlrArmServices"
+        }
+        ros_params[f"{n}_jt_controller"] = {
+            "type": "joint_trajectory_controller/JointTrajectoryController"
+        }
+        ros_params[f"{n}_direct_cmd"] = {
+            "type": "cynlr_direct_command_controller/CynlrDirectCommandController"
+        }
+        ros_params[f"{n}_nrt"] = {
+            "type": "cynlr_nrt_passthrough_controller/CynlrNrtPassthroughController"
+        }
+        ros_params[f"{n}_cartesian"] = {
+            "type": "cynlr_cartesian_controller/CynlrCartesianController"
+        }
+
+        def joints():
+            return [f"{n}_joint{i}" for i in range(1, 8)]
+
+        cm[f"{n}_state_broadcaster"] = {
+            "ros__parameters": {"prefix": f"{n}_", "publish_rate": 100.0}
+        }
+        cm[f"{n}_services"] = {
+            "ros__parameters": {"prefix": f"{n}_"}
+        }
+        cm[f"{n}_jt_controller"] = {
+            "ros__parameters": {
+                "joints": joints(),
+                "command_interfaces": ["position"],
+                "state_interfaces": ["position", "velocity"],
+                "state_publish_rate": 50.0,
+                "action_monitor_rate": 20.0,
+                "allow_partial_joints_goal": False,
+                "constraints": {
+                    "stopped_velocity_tolerance": 0.01,
+                    "goal_time": 5.0,
+                },
+            }
+        }
+        cm[f"{n}_direct_cmd"] = {
+            "ros__parameters": {"prefix": f"{n}_", "joints": joints()}
+        }
+        cm[f"{n}_nrt"] = {
+            "ros__parameters": {"prefix": f"{n}_"}
+        }
+        cm[f"{n}_cartesian"] = {
+            "ros__parameters": {"prefix": f"{n}_"}
+        }
+
+    return yaml.dump(cm, default_flow_style=False)
+
+
+# ---------------------------------------------------------------------------
+# Launch description
+# ---------------------------------------------------------------------------
 
 def generate_launch_description():
-    # ── Declare arguments ──────────────────────────────────────────────────────
-
     declared_arguments = [
-        DeclareLaunchArgument(
-            "sn_left",
-            default_value="",
-            description="Serial number of the left arm (empty = use vendor sim).",
-        ),
-        DeclareLaunchArgument(
-            "sn_center",
-            default_value="",
-            description="Serial number of the center arm (empty = use vendor sim).",
-        ),
-        DeclareLaunchArgument(
-            "sn_right",
-            default_value="",
-            description="Serial number of the right arm (empty = use vendor sim).",
-        ),
-        DeclareLaunchArgument(
-            "vendor",
-            default_value="sim",
-            description="Hardware vendor: 'sim' for SimArm, 'flexiv' for real hardware.",
-            choices=["sim", "flexiv"],
-        ),
         DeclareLaunchArgument(
             "use_moveit",
             default_value="false",
@@ -51,233 +169,197 @@ def generate_launch_description():
             default_value="true",
             description="Launch RViz for visualization.",
         ),
+        DeclareLaunchArgument(
+            "config_file",
+            default_value=os.path.join(
+                get_package_share_directory("cynlr_bringup"),
+                "config", "cynlr_system_config.yaml"
+            ),
+            description="Path to cynlr_system_config.yaml.",
+        ),
     ]
 
-    sn_left    = LaunchConfiguration("sn_left")
-    sn_center  = LaunchConfiguration("sn_center")
-    sn_right   = LaunchConfiguration("sn_right")
-    vendor     = LaunchConfiguration("vendor")
     use_moveit = LaunchConfiguration("use_moveit")
     use_rviz   = LaunchConfiguration("use_rviz")
 
-    # ── Robot description (xacro → URDF) ──────────────────────────────────────
+    # OpaqueFunction runs at launch time with access to the context (resolved args)
+    def launch_setup(context, *args, **kwargs):
+        config_path = LaunchConfiguration("config_file").perform(context)
+        config = load_system_config(config_path)
 
-    cynlr_urdf_xacro = PathJoinSubstitution(
-        [FindPackageShare("cynlr_arm_description"), "urdf", "cynlr_arm_system.urdf.xacro"]
-    )
+        # ── URDF ────────────────────────────────────────────────────────────
+        urdf_str = generate_urdf(config)
+        robot_description = {"robot_description": urdf_str}
 
-    robot_description_content = ParameterValue(
-        Command(
-            [
-                FindExecutable(name="xacro"),
-                " ",
-                cynlr_urdf_xacro,
-                " sn_left:=",    sn_left,
-                " sn_center:=",  sn_center,
-                " sn_right:=",   sn_right,
-                " vendor:=",     vendor,
-            ]
-        ),
-        value_type=str,
-    )
-
-    robot_description = {"robot_description": robot_description_content}
-
-    # ── Semantic robot description (SRDF) ─────────────────────────────────────
-
-    cynlr_srdf_xacro = PathJoinSubstitution(
-        [FindPackageShare("cynlr_moveit_config"), "srdf", "cynlr_three_arm.srdf.xacro"]
-    )
-
-    robot_description_semantic_content = ParameterValue(
-        Command(
-            [
-                FindExecutable(name="xacro"),
-                " ",
-                cynlr_srdf_xacro,
-            ]
-        ),
-        value_type=str,
-    )
-
-    robot_description_semantic = {"robot_description_semantic": robot_description_semantic_content}
-
-    # ── Controller YAML ────────────────────────────────────────────────────────
-
-    robot_controllers = PathJoinSubstitution(
-        [FindPackageShare("cynlr_bringup"), "config", "cynlr_controllers.yaml"]
-    )
-
-    # ── Core nodes ────────────────────────────────────────────────────────────
-
-    ros2_control_node = Node(
-        package="controller_manager",
-        executable="ros2_control_node",
-        parameters=[robot_description, ParameterFile(robot_controllers, allow_substs=True)],
-        output="both",
-    )
-
-    robot_state_publisher_node = Node(
-        package="robot_state_publisher",
-        executable="robot_state_publisher",
-        output="both",
-        parameters=[robot_description, robot_description_semantic],
-    )
-
-    # ── RViz ─────────────────────────────────────────────────────────────────
-
-    rviz_node = Node(
-        package="rviz2",
-        executable="rviz2",
-        name="rviz2",
-        output="log",
-        condition=IfCondition(use_rviz),
-    )
-
-    # ── MoveIt move_group ─────────────────────────────────────────────────────
-
-    moveit_node = Node(
-        package="moveit_ros_move_group",
-        executable="move_group",
-        output="both",
-        parameters=[
-            robot_description,
-            robot_description_semantic,
-            PathJoinSubstitution(
-                [FindPackageShare("cynlr_moveit_config"), "config", "kinematics.yaml"]
-            ),
-            PathJoinSubstitution(
-                [FindPackageShare("cynlr_moveit_config"), "config", "moveit_controllers.yaml"]
-            ),
-            PathJoinSubstitution(
-                [FindPackageShare("cynlr_moveit_config"), "config", "ompl_planning.yaml"]
-            ),
-            PathJoinSubstitution(
-                [FindPackageShare("cynlr_moveit_config"), "config", "sensors_3d.yaml"]
-            ),
-        ],
-        condition=IfCondition(use_moveit),
-    )
-
-    # ── Controller spawners ───────────────────────────────────────────────────
-    # Spawners exit after the controller is activated. We chain them with
-    # OnProcessExit to enforce startup ordering without polling or sleep.
-
-    def spawner(name, *, inactive=False):
-        args = [name, "--controller-manager", "/controller_manager"]
-        if inactive:
-            args += ["--inactive"]
-        return Node(package="controller_manager", executable="spawner", arguments=args)
-
-    # Always-active ────────────────────────────────────────────────────────────
-    jsb_spawner          = spawner("joint_state_broadcaster")
-    left_state_spawner   = spawner("arm_left_state_broadcaster")
-    center_state_spawner = spawner("arm_center_state_broadcaster")
-    right_state_spawner  = spawner("arm_right_state_broadcaster")
-
-    # Default motion path (MoveIt / JTC) ──────────────────────────────────────
-    left_jt_spawner   = spawner("arm_left_jt_controller")
-    center_jt_spawner = spawner("arm_center_jt_controller")
-    right_jt_spawner  = spawner("arm_right_jt_controller")
-
-    # Escape hatches — loaded but inactive; switch via ros2 control switch_controllers
-    left_direct_spawner   = spawner("arm_left_direct_cmd",   inactive=True)
-    center_direct_spawner = spawner("arm_center_direct_cmd", inactive=True)
-    right_direct_spawner  = spawner("arm_right_direct_cmd",  inactive=True)
-
-    left_nrt_spawner   = spawner("arm_left_nrt",   inactive=True)
-    center_nrt_spawner = spawner("arm_center_nrt", inactive=True)
-    right_nrt_spawner  = spawner("arm_right_nrt",  inactive=True)
-
-    left_cart_spawner   = spawner("arm_left_cartesian",   inactive=True)
-    center_cart_spawner = spawner("arm_center_cartesian", inactive=True)
-    right_cart_spawner  = spawner("arm_right_cartesian",  inactive=True)
-
-    # ── Startup chain (OnProcessExit) ─────────────────────────────────────────
-    #
-    # jsb → left_state → center_state → right_state
-    #     → left_jt → center_jt → right_jt
-    #     → escape hatches (inactive) → rviz, moveit
-    #
-    # Each spawner exits once its controller is ACTIVE, so the next step only
-    # fires after the previous controller is fully running.
-
-    delay_left_state_after_jsb = RegisterEventHandler(
-        OnProcessExit(
-            target_action=jsb_spawner,
-            on_exit=[left_state_spawner],
+        # ── Controller YAML → tempfile ───────────────────────────────────────
+        ctrl_yaml = generate_controller_yaml(config)
+        ctrl_tmp = tempfile.NamedTemporaryFile(
+            suffix=".yaml", mode="w", delete=False, prefix="cynlr_ctrl_"
         )
-    )
+        ctrl_tmp.write(ctrl_yaml)
+        ctrl_tmp.flush()
+        ctrl_tmp_path = ctrl_tmp.name
+        ctrl_tmp.close()
 
-    delay_center_state_after_left_state = RegisterEventHandler(
-        OnProcessExit(
-            target_action=left_state_spawner,
-            on_exit=[center_state_spawner],
+        # ── Semantic description (SRDF) ──────────────────────────────────────
+        from launch.substitutions import Command, FindExecutable, PathJoinSubstitution
+        from launch_ros.substitutions import FindPackageShare
+        from launch_ros.parameter_descriptions import ParameterValue
+
+        cynlr_srdf_xacro = PathJoinSubstitution(
+            [FindPackageShare("cynlr_moveit_config"), "srdf", "cynlr_three_arm.srdf.xacro"]
         )
-    )
-
-    delay_right_state_after_center_state = RegisterEventHandler(
-        OnProcessExit(
-            target_action=center_state_spawner,
-            on_exit=[right_state_spawner],
+        robot_description_semantic_content = ParameterValue(
+            Command([FindExecutable(name="xacro"), " ", cynlr_srdf_xacro]),
+            value_type=str,
         )
-    )
+        robot_description_semantic = {
+            "robot_description_semantic": robot_description_semantic_content
+        }
 
-    delay_left_jt_after_right_state = RegisterEventHandler(
-        OnProcessExit(
-            target_action=right_state_spawner,
-            on_exit=[left_jt_spawner],
+        # ── Core nodes ────────────────────────────────────────────────────────
+        ros2_control_node = Node(
+            package="controller_manager",
+            executable="ros2_control_node",
+            parameters=[robot_description, ParameterFile(ctrl_tmp_path, allow_substs=True)],
+            output="both",
         )
-    )
 
-    delay_center_jt_after_left_jt = RegisterEventHandler(
-        OnProcessExit(
-            target_action=left_jt_spawner,
-            on_exit=[center_jt_spawner],
+        robot_state_publisher_node = Node(
+            package="robot_state_publisher",
+            executable="robot_state_publisher",
+            output="both",
+            parameters=[robot_description, robot_description_semantic],
         )
-    )
 
-    delay_right_jt_after_center_jt = RegisterEventHandler(
-        OnProcessExit(
-            target_action=center_jt_spawner,
-            on_exit=[right_jt_spawner],
+        rviz_node = Node(
+            package="rviz2",
+            executable="rviz2",
+            name="rviz2",
+            output="log",
+            condition=IfCondition(use_rviz),
         )
-    )
 
-    # Load all escape-hatch controllers (inactive) after the last JTC is up
-    delay_hatches_after_right_jt = RegisterEventHandler(
-        OnProcessExit(
-            target_action=right_jt_spawner,
-            on_exit=[
-                left_direct_spawner,   center_direct_spawner,   right_direct_spawner,
-                left_nrt_spawner,      center_nrt_spawner,      right_nrt_spawner,
-                left_cart_spawner,     center_cart_spawner,     right_cart_spawner,
+        moveit_node = Node(
+            package="moveit_ros_move_group",
+            executable="move_group",
+            output="both",
+            parameters=[
+                robot_description,
+                robot_description_semantic,
+                PathJoinSubstitution(
+                    [FindPackageShare("cynlr_moveit_config"), "config", "kinematics.yaml"]
+                ),
+                PathJoinSubstitution(
+                    [FindPackageShare("cynlr_moveit_config"), "config", "moveit_controllers.yaml"]
+                ),
+                PathJoinSubstitution(
+                    [FindPackageShare("cynlr_moveit_config"), "config", "ompl_planning.yaml"]
+                ),
+                PathJoinSubstitution(
+                    [FindPackageShare("cynlr_moveit_config"), "config", "sensors_3d.yaml"]
+                ),
             ],
+            condition=IfCondition(use_moveit),
         )
-    )
 
-    # RViz and MoveIt after the right cartesian spawner exits (all controllers loaded)
-    delay_viz_after_hatches = RegisterEventHandler(
-        OnProcessExit(
-            target_action=right_cart_spawner,
+        # ── Spawner helper ────────────────────────────────────────────────────
+        def spawner(name, *, inactive=False):
+            args = [name, "--controller-manager", "/controller_manager"]
+            if inactive:
+                args += ["--inactive"]
+            return Node(
+                package="controller_manager",
+                executable="spawner",
+                arguments=args,
+            )
+
+        # ── Joint state broadcaster (always first) ────────────────────────────
+        jsb_spawner = spawner("joint_state_broadcaster")
+
+        # ── Per-arm spawners ──────────────────────────────────────────────────
+        arms = config["arms"]
+        state_spawners   = [spawner(f"{a['name']}_state_broadcaster") for a in arms]
+        services_spawners = [spawner(f"{a['name']}_services") for a in arms]
+        jt_spawners      = [spawner(f"{a['name']}_jt_controller") for a in arms]
+
+        hatch_spawners = []
+        for a in arms:
+            n = a["name"]
+            hatch_spawners += [
+                spawner(f"{n}_direct_cmd", inactive=True),
+                spawner(f"{n}_nrt",        inactive=True),
+                spawner(f"{n}_cartesian",  inactive=True),
+            ]
+
+        # ── OnProcessExit chain ───────────────────────────────────────────────
+        # jsb → state[0] → state[1] → ... → services[0] → ... → jt[0] → ... → hatches → viz
+        event_handlers = []
+
+        # jsb → first state broadcaster
+        event_handlers.append(RegisterEventHandler(OnProcessExit(
+            target_action=jsb_spawner,
+            on_exit=[state_spawners[0]],
+        )))
+
+        # state[i] → state[i+1]
+        for i in range(len(state_spawners) - 1):
+            event_handlers.append(RegisterEventHandler(OnProcessExit(
+                target_action=state_spawners[i],
+                on_exit=[state_spawners[i + 1]],
+            )))
+
+        # last state → first services
+        event_handlers.append(RegisterEventHandler(OnProcessExit(
+            target_action=state_spawners[-1],
+            on_exit=[services_spawners[0]],
+        )))
+
+        # services[i] → services[i+1]
+        for i in range(len(services_spawners) - 1):
+            event_handlers.append(RegisterEventHandler(OnProcessExit(
+                target_action=services_spawners[i],
+                on_exit=[services_spawners[i + 1]],
+            )))
+
+        # last services → first jt
+        event_handlers.append(RegisterEventHandler(OnProcessExit(
+            target_action=services_spawners[-1],
+            on_exit=[jt_spawners[0]],
+        )))
+
+        # jt[i] → jt[i+1]
+        for i in range(len(jt_spawners) - 1):
+            event_handlers.append(RegisterEventHandler(OnProcessExit(
+                target_action=jt_spawners[i],
+                on_exit=[jt_spawners[i + 1]],
+            )))
+
+        # last jt → all escape-hatch spawners at once
+        event_handlers.append(RegisterEventHandler(OnProcessExit(
+            target_action=jt_spawners[-1],
+            on_exit=hatch_spawners,
+        )))
+
+        # last hatch → rviz + moveit
+        event_handlers.append(RegisterEventHandler(OnProcessExit(
+            target_action=hatch_spawners[-1],
             on_exit=[rviz_node, moveit_node],
-        )
+        )))
+
+        # Cleanup tempfile on shutdown
+        event_handlers.append(RegisterEventHandler(OnShutdown(
+            on_shutdown=[OpaqueFunction(function=lambda ctx: os.unlink(ctrl_tmp_path)
+                         if os.path.exists(ctrl_tmp_path) else None)]
+        )))
+
+        return [
+            ros2_control_node,
+            robot_state_publisher_node,
+            jsb_spawner,
+            *event_handlers,
+        ]
+
+    return LaunchDescription(
+        declared_arguments + [OpaqueFunction(function=launch_setup)]
     )
-
-    # ── Assemble LaunchDescription ────────────────────────────────────────────
-
-    nodes = [
-        ros2_control_node,
-        robot_state_publisher_node,
-        jsb_spawner,
-        delay_left_state_after_jsb,
-        delay_center_state_after_left_state,
-        delay_right_state_after_center_state,
-        delay_left_jt_after_right_state,
-        delay_center_jt_after_left_jt,
-        delay_right_jt_after_center_jt,
-        delay_hatches_after_right_jt,
-        delay_viz_after_hatches,
-    ]
-
-    return LaunchDescription(declared_arguments + nodes)

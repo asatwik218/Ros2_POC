@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>cynlr_hardware</name>
+  <name>cynlr_robot</name>
   <version>0.1.0</version>
   <description>ros2_control hardware interface plugin for CynLR robot arms</description>
   <maintainer email="satwik.agarwal@cynlr.com">Satwik Agarwal</maintainer>

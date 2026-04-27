@@ -1,8 +1,10 @@
-#include "cynlr_hardware/cynlr_hardware_interface.hpp"
+#include "cynlr_robot/cynlr_robot_interface.hpp"
 
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -13,7 +15,7 @@
 #include "cynlr_arm_core/arm_factory.hpp"
 #include "cynlr_arm_core/error.hpp"
 
-namespace cynlr_hardware {
+namespace cynlr_robot {
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,7 +53,7 @@ bool all_valid(const double* arr, int n)
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-hardware_interface::CallbackReturn CynlrHardwareInterface::on_init(
+hardware_interface::CallbackReturn CynlrRobotInterface::on_init(
     const hardware_interface::HardwareInfo& info)
 {
     if (SystemInterface::on_init(info) != hardware_interface::CallbackReturn::SUCCESS)
@@ -80,9 +82,27 @@ hardware_interface::CallbackReturn CynlrHardwareInterface::on_init(
 
     arm_config_.num_joints = kDOF;
 
-    // Pass any remaining params to the arm as vendor-specific key-value pairs
+    // Parse tool info from URDF hardware params (space-separated doubles)
+    auto parse_doubles = [](const std::string& s, double* out, int n) {
+        std::istringstream ss(s);
+        for (int i = 0; i < n; ++i) ss >> out[i];
+    };
+    if (auto it = params.find("tool_mass_kg"); it != params.end())
+        tool_info_.mass_kg = std::stod(it->second);
+    if (auto it = params.find("tool_com"); it != params.end())
+        parse_doubles(it->second, tool_info_.com.data(), 3);
+    if (auto it = params.find("tool_inertia"); it != params.end())
+        parse_doubles(it->second, tool_info_.inertia.data(), 6);
+    if (auto it = params.find("tool_tcp_pose"); it != params.end())
+        parse_doubles(it->second, tool_info_.tcp_pose.data(), 7);
+
+    // Pass remaining params to the arm as vendor-specific key-value pairs
+    static const std::set<std::string> kOwnParams = {
+        "prefix", "vendor", "serial_number", "ip_address",
+        "tool_mass_kg", "tool_com", "tool_inertia", "tool_tcp_pose"
+    };
     for (auto& [k, v] : params) {
-        if (k != "prefix" && k != "vendor" && k != "serial_number" && k != "ip_address")
+        if (!kOwnParams.count(k))
             arm_config_.params[k] = v;
     }
 
@@ -130,7 +150,7 @@ hardware_interface::CallbackReturn CynlrHardwareInterface::on_init(
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
-hardware_interface::CallbackReturn CynlrHardwareInterface::on_activate(
+hardware_interface::CallbackReturn CynlrRobotInterface::on_activate(
     const rclcpp_lifecycle::State&)
 {
     RCLCPP_INFO(getLogger(), "[%s] Connecting and enabling arm...", prefix_.c_str());
@@ -159,6 +179,16 @@ hardware_interface::CallbackReturn CynlrHardwareInterface::on_activate(
         return hardware_interface::CallbackReturn::ERROR;
     }
 
+    // Apply tool info from config (mass_kg > 0 or non-zero tcp_pose indicates a real tool)
+    if (tool_info_.mass_kg > 0.0 || tool_info_.tcp_pose[2] != 0.0) {
+        auto st = arm_->set_tool(tool_info_);
+        if (!st)
+            RCLCPP_WARN(getLogger(), "[%s] set_tool() failed: %s",
+                prefix_.c_str(), st.error().message.c_str());
+        else
+            RCLCPP_INFO(getLogger(), "[%s] Tool applied (mass=%.3f kg)", prefix_.c_str(), tool_info_.mass_kg);
+    }
+
     // Seed cmd_pos_ from current state so the arm holds position on first write
     auto st = arm_->get_state();
     if (st) {
@@ -171,7 +201,7 @@ hardware_interface::CallbackReturn CynlrHardwareInterface::on_activate(
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
-hardware_interface::CallbackReturn CynlrHardwareInterface::on_deactivate(
+hardware_interface::CallbackReturn CynlrRobotInterface::on_deactivate(
     const rclcpp_lifecycle::State&)
 {
     RCLCPP_INFO(getLogger(), "[%s] Stopping arm...", prefix_.c_str());
@@ -192,7 +222,7 @@ hardware_interface::CallbackReturn CynlrHardwareInterface::on_deactivate(
 // ---------------------------------------------------------------------------
 
 std::vector<hardware_interface::StateInterface>
-CynlrHardwareInterface::export_state_interfaces()
+CynlrRobotInterface::export_state_interfaces()
 {
     std::vector<hardware_interface::StateInterface> si;
 
@@ -239,7 +269,7 @@ CynlrHardwareInterface::export_state_interfaces()
 }
 
 std::vector<hardware_interface::CommandInterface>
-CynlrHardwareInterface::export_command_interfaces()
+CynlrRobotInterface::export_command_interfaces()
 {
     std::vector<hardware_interface::CommandInterface> ci;
 
@@ -272,7 +302,7 @@ CynlrHardwareInterface::export_command_interfaces()
 // Mode switching
 // ---------------------------------------------------------------------------
 
-hardware_interface::return_type CynlrHardwareInterface::prepare_command_mode_switch(
+hardware_interface::return_type CynlrRobotInterface::prepare_command_mode_switch(
     const std::vector<std::string>& start_interfaces,
     const std::vector<std::string>& stop_interfaces)
 {
@@ -345,7 +375,7 @@ hardware_interface::return_type CynlrHardwareInterface::prepare_command_mode_swi
     return hardware_interface::return_type::OK;
 }
 
-hardware_interface::return_type CynlrHardwareInterface::perform_command_mode_switch(
+hardware_interface::return_type CynlrRobotInterface::perform_command_mode_switch(
     const std::vector<std::string>&, const std::vector<std::string>&)
 {
     if (pending_stop_ && active_mode_ != ActiveMode::NONE) {
@@ -384,7 +414,7 @@ hardware_interface::return_type CynlrHardwareInterface::perform_command_mode_swi
 // Control loop — called at 1kHz by the controller manager
 // ---------------------------------------------------------------------------
 
-hardware_interface::return_type CynlrHardwareInterface::read(
+hardware_interface::return_type CynlrRobotInterface::read(
     const rclcpp::Time&, const rclcpp::Duration&)
 {
     auto result = arm_->get_state();
@@ -411,7 +441,7 @@ hardware_interface::return_type CynlrHardwareInterface::read(
     return hardware_interface::return_type::OK;
 }
 
-hardware_interface::return_type CynlrHardwareInterface::write(
+hardware_interface::return_type CynlrRobotInterface::write(
     const rclcpp::Time&, const rclcpp::Duration&)
 {
     using cynlr::arm::StreamCommand;
@@ -490,13 +520,13 @@ hardware_interface::return_type CynlrHardwareInterface::write(
 
 // ---------------------------------------------------------------------------
 
-rclcpp::Logger CynlrHardwareInterface::getLogger()
+rclcpp::Logger CynlrRobotInterface::getLogger()
 {
-    return rclcpp::get_logger("CynlrHardwareInterface");
+    return rclcpp::get_logger("CynlrRobotInterface");
 }
 
-} // namespace cynlr_hardware
+} // namespace cynlr_robot
 
 PLUGINLIB_EXPORT_CLASS(
-    cynlr_hardware::CynlrHardwareInterface,
+    cynlr_robot::CynlrRobotInterface,
     hardware_interface::SystemInterface)

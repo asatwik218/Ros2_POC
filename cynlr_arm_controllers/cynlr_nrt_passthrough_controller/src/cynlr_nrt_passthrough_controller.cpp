@@ -144,8 +144,7 @@ rclcpp_action::GoalResponse CynlrNrtPassthroughController::handle_move_l_goal(
     std::shared_ptr<const MoveLAction::Goal>)
 {
     if (motion_running_.load()) {
-        RCLCPP_WARN(get_node()->get_logger(), "[%s] Rejecting MoveL — motion already running",
-            prefix_.c_str());
+        RCLCPP_WARN(get_node()->get_logger(), "[%s] Rejecting MoveL — motion already running",prefix_.c_str());
         return rclcpp_action::GoalResponse::REJECT;
     }
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;

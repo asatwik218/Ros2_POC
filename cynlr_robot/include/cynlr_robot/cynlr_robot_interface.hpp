@@ -16,14 +16,14 @@
 #include "cynlr_arm_core/capabilities/digital_io_controllable.hpp"
 #include "cynlr_arm_core/types.hpp"
 
-namespace cynlr_hardware {
+namespace cynlr_robot {
 
 enum class ActiveMode { NONE, POSITION, VELOCITY, EFFORT, CARTESIAN };
 
-class CynlrHardwareInterface : public hardware_interface::SystemInterface
+class CynlrRobotInterface : public hardware_interface::SystemInterface
 {
 public:
-    RCLCPP_SHARED_PTR_DEFINITIONS(CynlrHardwareInterface)
+    RCLCPP_SHARED_PTR_DEFINITIONS(CynlrRobotInterface)
 
     hardware_interface::CallbackReturn on_init(
         const hardware_interface::HardwareInfo& info) override;
@@ -63,6 +63,9 @@ private:
     // Raw pointer stored so the NrtPassthroughController can recover it via bit_cast
     cynlr::arm::ArmInterface* arm_raw_ptr_{nullptr};
 
+    // Tool info loaded from URDF hardware params; applied in on_activate() after enable
+    cynlr::arm::ToolInfo tool_info_{};
+
     // --- Standard joint state mirrors (written by read(), read by controllers) ---
     std::array<double, kDOF> hw_pos_{};
     std::array<double, kDOF> hw_vel_{};
@@ -100,4 +103,4 @@ private:
     static rclcpp::Logger getLogger();
 };
 
-} // namespace cynlr_hardware
+} // namespace cynlr_robot

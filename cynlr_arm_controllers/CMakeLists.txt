@@ -91,6 +91,25 @@ ament_target_dependencies(cynlr_cartesian_controller
 )
 
 # ---------------------------------------------------------------------------
+# cynlr_arm_services  (non-RT service host: clear_fault, set_tool, zero_ft_sensor)
+# ---------------------------------------------------------------------------
+add_library(cynlr_arm_services SHARED
+    cynlr_arm_services/src/cynlr_arm_services.cpp
+)
+target_include_directories(cynlr_arm_services PRIVATE
+    cynlr_arm_services/include
+)
+ament_target_dependencies(cynlr_arm_services
+    rclcpp rclcpp_lifecycle controller_interface hardware_interface
+    pluginlib cynlr_arm_interfaces
+)
+target_link_libraries(cynlr_arm_services cynlr::cynlr_arm_core)
+set_target_properties(cynlr_arm_services PROPERTIES
+    INSTALL_RPATH "${_cynlr_libdir}"
+    BUILD_WITH_INSTALL_RPATH TRUE
+)
+
+# ---------------------------------------------------------------------------
 # Plugin registration
 # ---------------------------------------------------------------------------
 pluginlib_export_plugin_description_file(controller_interface cynlr_controllers_plugin.xml)
@@ -103,6 +122,7 @@ install(TARGETS
     cynlr_direct_command_controller
     cynlr_nrt_passthrough_controller
     cynlr_cartesian_controller
+    cynlr_arm_services
     DESTINATION lib
 )
 
@@ -113,7 +133,8 @@ else()
         cynlr_state_broadcaster
         cynlr_direct_command_controller
         cynlr_nrt_passthrough_controller
-        cynlr_cartesian_controller)
+        cynlr_cartesian_controller
+        cynlr_arm_services)
         target_compile_options(${_tgt} PRIVATE -Wall -Wextra -Wpedantic)
     endforeach()
 endif()

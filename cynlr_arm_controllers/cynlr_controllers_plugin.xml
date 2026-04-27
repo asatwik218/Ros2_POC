@@ -45,3 +45,15 @@
     </description>
   </class>
 </library>
+
+<library path="cynlr_arm_services">
+  <class name="cynlr_arm_services/CynlrArmServices"
+         type="cynlr_arm_controllers::CynlrArmServices"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      Non-RT service host. Recovers the raw ArmInterface pointer from the hardware
+      interface and exposes ROS2 services: clear_fault, set_tool, zero_ft_sensor.
+      No-op update() — runs on the controller_manager executor alongside RT controllers.
+    </description>
+  </class>
+</library>

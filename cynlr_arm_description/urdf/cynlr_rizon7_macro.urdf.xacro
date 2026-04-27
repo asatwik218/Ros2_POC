@@ -20,7 +20,11 @@
 
   <xacro:macro name="cynlr_rizon7"
                params="prefix serial_number vendor parent
-                       origin_xyz:='0 0 0' origin_rpy:='0 0 0'">
+                       origin_xyz:='0 0 0' origin_rpy:='0 0 0'
+                       tool_mass_kg:='0.0'
+                       tool_com:='0.0 0.0 0.0'
+                       tool_inertia:='0.0 0.0 0.0 0.0 0.0 0.0'
+                       tool_tcp_pose:='0.0 0.0 0.0 1.0 0.0 0.0 0.0'">
 
     <!-- Arm kinematics: Rizon4 (7-DOF) -->
     <xacro:rizon_arm
@@ -46,10 +50,14 @@
     <ros2_control name="${prefix}system" type="system">
 
       <hardware>
-        <plugin>cynlr_hardware/CynlrHardwareInterface</plugin>
+        <plugin>cynlr_robot/CynlrRobotInterface</plugin>
         <param name="prefix">${prefix}</param>
         <param name="vendor">${vendor}</param>
         <param name="serial_number">${serial_number}</param>
+        <param name="tool_mass_kg">${tool_mass_kg}</param>
+        <param name="tool_com">${tool_com}</param>
+        <param name="tool_inertia">${tool_inertia}</param>
+        <param name="tool_tcp_pose">${tool_tcp_pose}</param>
       </hardware>
 
       <!-- 7 joints: position, velocity, effort -->

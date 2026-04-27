@@ -1,0 +1,39 @@
+system:
+  update_rate: 500  # Hz
+
+arms:
+  - name: arm_left
+    vendor: flexiv
+    serial_number: "Rizon4s-BYysH5"
+    mount:
+      xyz: [-0.5, 0.0, 0.9]
+      rpy: [0.0, 0.0, 0.0]
+    tool:
+      mass_kg: 0.5
+      com: [0.0, 0.0, 0.05]
+      inertia: [0.001, 0.001, 0.001, 0.0, 0.0, 0.0]
+      tcp_pose: [0.0, 0.0, 0.1, 1.0, 0.0, 0.0, 0.0]
+
+  - name: arm_center
+    vendor: sim
+    serial_number: "sim1"
+    mount:
+      xyz: [0.0, 0.0, 1.2]
+      rpy: [0.0, 0.0, 0.0]
+    tool:
+      mass_kg: 0.0
+      com: [0.0, 0.0, 0.0]
+      inertia: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      tcp_pose: [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+
+  - name: arm_right
+    vendor: sim
+    serial_number: "sim2"
+    mount:
+      xyz: [0.5, 0.0, 0.9]
+      rpy: [0.0, 0.0, 3.14159265]
+    tool:
+      mass_kg: 0.0
+      com: [0.0, 0.0, 0.0]
+      inertia: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      tcp_pose: [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
