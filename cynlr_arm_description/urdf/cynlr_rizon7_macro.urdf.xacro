@@ -4,12 +4,12 @@
   Macro for a single CynLR Rizon 7-DOF arm (Rizon4 variant) with ros2_control block.
 
   Parameters:
-    prefix        – joint/link name prefix, e.g. "arm_left_"
-    serial_number – Flexiv serial number (or empty string for sim)
-    vendor        – "flexiv" or "sim"
-    parent        – parent link to attach the arm base to
-    origin_xyz    – base translation, e.g. "0 0 0"
-    origin_rpy    – base rotation, e.g. "0 0 0"
+    prefix        - joint/link name prefix, e.g. "arm_left_"
+    serial_number - Flexiv serial number (or empty string for sim)
+    vendor        - "flexiv" or "sim"
+    parent        - parent link to attach the arm base to
+    origin_xyz    - base translation, e.g. "0 0 0"
+    origin_rpy    - base rotation, e.g. "0 0 0"
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
@@ -22,9 +22,7 @@
                params="prefix serial_number vendor parent
                        origin_xyz:='0 0 0' origin_rpy:='0 0 0'">
 
-    <!-- ------------------------------------------------------------------ -->
-    <!-- Arm kinematics — Rizon4 (7-DOF)                                     -->
-    <!-- ------------------------------------------------------------------ -->
+    <!-- Arm kinematics: Rizon4 (7-DOF) -->
     <xacro:rizon_arm
       prefix="${prefix}"
       joint_limits_parameters_file="$(find flexiv_description)/config/${rizon_type}/joint_limits.yaml"
@@ -44,9 +42,7 @@
       <origin xyz="${origin_xyz}" rpy="${origin_rpy}"/>
     </joint>
 
-    <!-- ------------------------------------------------------------------ -->
-    <!-- ros2_control block — one hardware plugin instance per arm           -->
-    <!-- ------------------------------------------------------------------ -->
+    <!-- ros2_control block: one hardware plugin instance per arm -->
     <ros2_control name="${prefix}system" type="system">
 
       <hardware>
@@ -153,17 +149,17 @@
         <state_interface name="vel_5"/>
       </sensor>
 
-      <!-- Full ArmState pointer — for CynlrStateBroadcaster -->
+      <!-- Full ArmState pointer for CynlrStateBroadcaster -->
       <sensor name="${prefix}cynlr_arm_state">
         <state_interface name="full_state_ptr"/>
       </sensor>
 
-      <!-- ArmInterface raw pointer — for CynlrNrtPassthroughController (hatch #2) -->
+      <!-- ArmInterface raw pointer for CynlrNrtPassthroughController (hatch #2) -->
       <sensor name="${prefix}cynlr_arm_ctrl">
         <state_interface name="arm_interface_ptr"/>
       </sensor>
 
-      <!-- Cartesian command interfaces (13 doubles via gpio) — for hatch #3 -->
+      <!-- Cartesian command interfaces (13 doubles via gpio) for hatch #3 -->
       <gpio name="${prefix}cartesian_cmd">
         <command_interface name="pose_0"/>
         <command_interface name="pose_1"/>

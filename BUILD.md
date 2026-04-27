@@ -1,6 +1,6 @@
 # Build & Test Guide
 
-## Status (as of 2026-04-25)
+## Status (as of 2026-04-27)
 
 | Package | Built | Tests |
 |---|---|---|
@@ -10,17 +10,19 @@
 | cynlr_hardware | ✅ colcon | — |
 | cynlr_arm_controllers | ✅ colcon | — |
 | cynlr_camera | ✅ colcon | — |
-| cynlr_arm_description | ✅ colcon | XACRO parse — **NEXT STEP** |
+| cynlr_arm_description | ✅ colcon | ✅ xacro parses cleanly |
 | cynlr_moveit_config | ✅ colcon | — |
-| cynlr_bringup | ✅ colcon | System launch — **NEXT STEP** |
-| flexiv_description | ✅ cloned (humble branch) | — |
+| cynlr_bringup | ✅ colcon | ✅ system launch: 16 controllers, 7 active, joint_states ~1000 Hz |
+| flexiv_description | ✅ colcon (humble branch) | — |
+
+**NEXT STEP: Escape hatch switching tests** — see section below.
 
 ---
 
 ## One-time prerequisites
 
 ```bash
-# 1. ros2-control stack
+# 1. ros2-control stack + xacro
 sudo apt install -y \
   ros-jazzy-ros2-control \
   ros-jazzy-ros2-controllers \
@@ -45,6 +47,7 @@ source /opt/ros/jazzy/setup.bash
 
 colcon build \
   --packages-select \
+    flexiv_description \
     cynlr_arm_interfaces \
     cynlr_arm_service \
     cynlr_hardware \
@@ -73,56 +76,62 @@ colcon test-result --all --verbose
 
 ---
 
-## NEXT STEP: Fix URDF xacro parse error
-
-The URDF (`cynlr_arm_description/urdf/cynlr_arm_system.urdf.xacro`) currently fails
-to parse with xacro due to an XML well-formedness error at line 27. Debug with:
+## System smoke test
 
 ```bash
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
-xacro cynlr_arm_description/urdf/cynlr_arm_system.urdf.xacro \
-  vendor:=sim sn_left:="" sn_center:="" sn_right:=""
-```
-
-Once URDF parses cleanly, the system launch test can proceed:
-
-```bash
 ros2 launch cynlr_bringup cynlr_system.launch.py \
   vendor:=sim sn_left:=sim0 sn_center:=sim1 sn_right:=sim2 \
   use_rviz:=false use_moveit:=false
 ```
 
-Then verify:
+In a second terminal:
 ```bash
-ros2 control list_controllers          # 16 controllers, 7 active
-ros2 topic echo /arm_left_state --once # ArmState messages
-ros2 topic hz /joint_states            # ~1000 Hz
+source /opt/ros/jazzy/setup.bash && source install/setup.bash
+ros2 control list_controllers          # 16 controllers: 7 active, 9 inactive
+ros2 topic echo /arm_left_arm_state --once  # ArmState messages
+ros2 topic hz /joint_states                 # ~1000 Hz
 ```
 
 ---
 
-## Escape hatch switching (after system launch works)
+## NEXT STEP: Escape hatch switching
+
+With the system launch running, switch controllers and test each hatch:
 
 ```bash
 # Hatch #1 — direct joint commands
 ros2 control switch_controllers \
   --deactivate arm_left_jt_controller --activate arm_left_direct_cmd --strict
-ros2 topic pub /arm_left/joint_cmd_direct \
+ros2 topic pub /arm_left_joint_cmd_direct \
   cynlr_arm_interfaces/msg/JointCommand \
   "{mode: 0, joint_position: [0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 0.0]}" --once
+# Verify: ros2 topic echo /arm_left_arm_state --once  (joint_positions should shift)
+
+# Switch back
+ros2 control switch_controllers \
+  --deactivate arm_left_direct_cmd --activate arm_left_jt_controller --strict
 
 # Hatch #2 — NRT passthrough (arm's own planner)
 ros2 control switch_controllers \
   --deactivate arm_left_jt_controller --activate arm_left_nrt --strict
-ros2 action send_goal /arm_left/move_j cynlr_arm_interfaces/action/MoveJ \
-  "{target_positions: [0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], max_joint_vel: 0.5}"
+ros2 action send_goal /arm_left_move_j cynlr_arm_interfaces/action/MoveJ \
+  "{target_positions: [0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], max_joint_vel: 0.5, max_joint_acc: 1.0}"
+
+# Switch back
+ros2 control switch_controllers \
+  --deactivate arm_left_nrt --activate arm_left_jt_controller --strict
 
 # Hatch #3 — Cartesian command
 ros2 control switch_controllers \
   --deactivate arm_left_jt_controller --activate arm_left_cartesian --strict
-ros2 topic pub /arm_left/cartesian_cmd \
+ros2 topic pub /arm_left_cartesian_cmd \
   cynlr_arm_interfaces/msg/CartesianCommand \
   "{pose: [0.4, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0], wrench: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}" --once
+
+# Switch back
+ros2 control switch_controllers \
+  --deactivate arm_left_cartesian --activate arm_left_jt_controller --strict
 ```
 
 ---
@@ -132,7 +141,7 @@ ros2 topic pub /arm_left/cartesian_cmd \
 | Item | Path |
 |---|---|
 | cynlr_arm_core install | `~/cynlr_software/cynlr_install/` |
-| flexiv_description | `Cpp_App_Test/flexiv_description/` (humble branch) |
+| flexiv_description | `Cpp_App_Test/flexiv_description/` (humble branch, built with colcon) |
 | Architecture doc | `thoughts/shared/docs/architecture.md` |
 | Implementation plan | `thoughts/shared/plans/2026-04-13-robot-arm-service.md` |
 | Claude conversation memory | `.claude/` (included in repo) |

@@ -4,10 +4,10 @@
   Top-level description for the CynLR three-arm physical intelligence device.
 
   Launch arguments:
-    sn_left    – serial number of the left arm   (empty string → sim)
-    sn_center  – serial number of the center arm (empty string → sim)
-    sn_right   – serial number of the right arm  (empty string → sim)
-    vendor     – "flexiv" for real hardware, "sim" for simulation (default: sim)
+    sn_left    - serial number of the left arm   (empty string = sim)
+    sn_center  - serial number of the center arm (empty string = sim)
+    sn_right   - serial number of the right arm  (empty string = sim)
+    vendor     - "flexiv" for real hardware, "sim" for simulation (default: sim)
 
   Base transforms below are placeholders. Update xyz/rpy to match your mounting geometry.
 -->
@@ -24,9 +24,7 @@
   <!-- Fixed world frame -->
   <link name="world"/>
 
-  <!-- ------------------------------------------------------------------ -->
-  <!-- Left arm — mounted at -0.5m on the X axis, facing forward          -->
-  <!-- ------------------------------------------------------------------ -->
+  <!-- Left arm: mounted at -0.5m on the X axis, facing forward -->
   <xacro:cynlr_rizon7
     prefix="arm_left_"
     serial_number="$(arg sn_left)"
@@ -36,9 +34,7 @@
     origin_rpy="0 0 0"
   />
 
-  <!-- ------------------------------------------------------------------ -->
-  <!-- Center arm — mounted directly above, facing forward                 -->
-  <!-- ------------------------------------------------------------------ -->
+  <!-- Center arm: mounted directly above, facing forward -->
   <xacro:cynlr_rizon7
     prefix="arm_center_"
     serial_number="$(arg sn_center)"
@@ -48,9 +44,7 @@
     origin_rpy="0 0 0"
   />
 
-  <!-- ------------------------------------------------------------------ -->
-  <!-- Right arm — mounted at +0.5m on the X axis, rotated 180°           -->
-  <!-- ------------------------------------------------------------------ -->
+  <!-- Right arm: mounted at +0.5m on the X axis, rotated 180 deg -->
   <xacro:cynlr_rizon7
     prefix="arm_right_"
     serial_number="$(arg sn_right)"

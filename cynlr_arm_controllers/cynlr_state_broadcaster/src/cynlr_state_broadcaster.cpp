@@ -94,7 +94,7 @@ controller_interface::CallbackReturn CynlrStateBroadcaster::on_activate(
     // Compute decimation ratio: how many update() calls per ArmState publish
     // update_rate comes from controller_manager yaml (e.g. 1000 Hz)
     // We want to publish at publish_rate_ Hz
-    double update_rate = get_node()->get_parameter("update_rate").as_double();
+    double update_rate = static_cast<double>(get_node()->get_parameter("update_rate").as_int());
     if (update_rate > 0.0 && publish_rate_ > 0.0)
         publish_every_ = std::max(1, static_cast<int>(update_rate / publish_rate_));
     else
