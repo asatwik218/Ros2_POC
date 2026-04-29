@@ -157,16 +157,6 @@
         <state_interface name="vel_5"/>
       </sensor>
 
-      <!-- Full ArmState pointer for CynlrStateBroadcaster -->
-      <sensor name="${prefix}cynlr_arm_state">
-        <state_interface name="full_state_ptr"/>
-      </sensor>
-
-      <!-- ArmInterface raw pointer for CynlrNrtPassthroughController (hatch #2) -->
-      <sensor name="${prefix}cynlr_arm_ctrl">
-        <state_interface name="arm_interface_ptr"/>
-      </sensor>
-
       <!-- Cartesian command interfaces (13 doubles via gpio) for hatch #3 -->
       <gpio name="${prefix}cartesian_cmd">
         <command_interface name="pose_0"/>

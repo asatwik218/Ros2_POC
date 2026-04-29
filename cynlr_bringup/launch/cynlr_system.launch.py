@@ -79,8 +79,15 @@ def generate_urdf(config: dict) -> str:
         os.unlink(tf_path)
 
 
-def generate_controller_yaml(config: dict) -> str:
-    """Generate the full controller_manager YAML from config and return as string."""
+def generate_controller_yaml(config: dict, params_file_path: str) -> str:
+    """Generate the controller_manager YAML from config and return as string.
+
+    In ROS2 Jazzy, controller nodes do not inherit the process --params-file.
+    The controller_manager reads '{controller_name}.params_file' from its own
+    parameter section and passes that file to each controller node's NodeOptions.
+    We therefore embed a params_file reference pointing back at ourselves so the
+    CM can route the right parameters to each dynamically-loaded controller.
+    """
     update_rate = config["system"]["update_rate"]
 
     cm: dict = {
@@ -98,34 +105,23 @@ def generate_controller_yaml(config: dict) -> str:
         n = arm["name"]
         ros_params = cm["controller_manager"]["ros__parameters"]
 
-        ros_params[f"{n}_state_broadcaster"] = {
-            "type": "cynlr_state_broadcaster/CynlrStateBroadcaster"
-        }
-        ros_params[f"{n}_services"] = {
-            "type": "cynlr_arm_services/CynlrArmServices"
-        }
+        # params_file tells the CM where to load per-controller parameters from
         ros_params[f"{n}_jt_controller"] = {
-            "type": "joint_trajectory_controller/JointTrajectoryController"
+            "type": "joint_trajectory_controller/JointTrajectoryController",
+            "params_file": params_file_path,
         }
         ros_params[f"{n}_direct_cmd"] = {
-            "type": "cynlr_direct_command_controller/CynlrDirectCommandController"
-        }
-        ros_params[f"{n}_nrt"] = {
-            "type": "cynlr_nrt_passthrough_controller/CynlrNrtPassthroughController"
+            "type": "cynlr_direct_command_controller/CynlrDirectCommandController",
+            "params_file": params_file_path,
         }
         ros_params[f"{n}_cartesian"] = {
-            "type": "cynlr_cartesian_controller/CynlrCartesianController"
+            "type": "cynlr_cartesian_controller/CynlrCartesianController",
+            "params_file": params_file_path,
         }
 
-        def joints():
-            return [f"{n}_joint{i}" for i in range(1, 8)]
+        def joints(name=n):
+            return [f"{name}_joint{i}" for i in range(1, 8)]
 
-        cm[f"{n}_state_broadcaster"] = {
-            "ros__parameters": {"prefix": f"{n}_", "publish_rate": 100.0}
-        }
-        cm[f"{n}_services"] = {
-            "ros__parameters": {"prefix": f"{n}_"}
-        }
         cm[f"{n}_jt_controller"] = {
             "ros__parameters": {
                 "joints": joints(),
@@ -142,9 +138,6 @@ def generate_controller_yaml(config: dict) -> str:
         }
         cm[f"{n}_direct_cmd"] = {
             "ros__parameters": {"prefix": f"{n}_", "joints": joints()}
-        }
-        cm[f"{n}_nrt"] = {
-            "ros__parameters": {"prefix": f"{n}_"}
         }
         cm[f"{n}_cartesian"] = {
             "ros__parameters": {"prefix": f"{n}_"}
@@ -182,7 +175,6 @@ def generate_launch_description():
     use_moveit = LaunchConfiguration("use_moveit")
     use_rviz   = LaunchConfiguration("use_rviz")
 
-    # OpaqueFunction runs at launch time with access to the context (resolved args)
     def launch_setup(context, *args, **kwargs):
         config_path = LaunchConfiguration("config_file").perform(context)
         config = load_system_config(config_path)
@@ -192,13 +184,15 @@ def generate_launch_description():
         robot_description = {"robot_description": urdf_str}
 
         # ── Controller YAML → tempfile ───────────────────────────────────────
-        ctrl_yaml = generate_controller_yaml(config)
+        # Create the tempfile first so we know its path, then embed the path
+        # as 'params_file' inside each controller's CM entry (Jazzy mechanism).
         ctrl_tmp = tempfile.NamedTemporaryFile(
             suffix=".yaml", mode="w", delete=False, prefix="cynlr_ctrl_"
         )
+        ctrl_tmp_path = ctrl_tmp.name
+        ctrl_yaml = generate_controller_yaml(config, ctrl_tmp_path)
         ctrl_tmp.write(ctrl_yaml)
         ctrl_tmp.flush()
-        ctrl_tmp_path = ctrl_tmp.name
         ctrl_tmp.close()
 
         # ── Semantic description (SRDF) ──────────────────────────────────────
@@ -217,10 +211,14 @@ def generate_launch_description():
             "robot_description_semantic": robot_description_semantic_content
         }
 
-        # ── Core nodes ────────────────────────────────────────────────────────
-        ros2_control_node = Node(
-            package="controller_manager",
-            executable="ros2_control_node",
+        # ── cynlr_main: ControllerManager + one CynlrArmNode per arm ────────
+        # All run in the same process so they share the CynlrArmRegistry singleton.
+        arm_prefixes = [f"{a['name']}_" for a in config["arms"]]
+
+        cynlr_main_node = Node(
+            package="cynlr_arm_node",
+            executable="cynlr_main",
+            arguments=arm_prefixes,
             parameters=[robot_description, ParameterFile(ctrl_tmp_path, allow_substs=True)],
             output="both",
         )
@@ -274,57 +272,24 @@ def generate_launch_description():
                 arguments=args,
             )
 
-        # ── Joint state broadcaster (always first) ────────────────────────────
-        jsb_spawner = spawner("joint_state_broadcaster")
-
-        # ── Per-arm spawners ──────────────────────────────────────────────────
+        # ── Spawner chain: jsb → jt[0..N-1] → escape hatches → viz ──────────
         arms = config["arms"]
-        state_spawners   = [spawner(f"{a['name']}_state_broadcaster") for a in arms]
-        services_spawners = [spawner(f"{a['name']}_services") for a in arms]
-        jt_spawners      = [spawner(f"{a['name']}_jt_controller") for a in arms]
 
+        jsb_spawner = spawner("joint_state_broadcaster")
+        jt_spawners = [spawner(f"{a['name']}_jt_controller") for a in arms]
         hatch_spawners = []
         for a in arms:
             n = a["name"]
             hatch_spawners += [
                 spawner(f"{n}_direct_cmd", inactive=True),
-                spawner(f"{n}_nrt",        inactive=True),
                 spawner(f"{n}_cartesian",  inactive=True),
             ]
 
-        # ── OnProcessExit chain ───────────────────────────────────────────────
-        # jsb → state[0] → state[1] → ... → services[0] → ... → jt[0] → ... → hatches → viz
         event_handlers = []
 
-        # jsb → first state broadcaster
+        # jsb → jt[0]
         event_handlers.append(RegisterEventHandler(OnProcessExit(
             target_action=jsb_spawner,
-            on_exit=[state_spawners[0]],
-        )))
-
-        # state[i] → state[i+1]
-        for i in range(len(state_spawners) - 1):
-            event_handlers.append(RegisterEventHandler(OnProcessExit(
-                target_action=state_spawners[i],
-                on_exit=[state_spawners[i + 1]],
-            )))
-
-        # last state → first services
-        event_handlers.append(RegisterEventHandler(OnProcessExit(
-            target_action=state_spawners[-1],
-            on_exit=[services_spawners[0]],
-        )))
-
-        # services[i] → services[i+1]
-        for i in range(len(services_spawners) - 1):
-            event_handlers.append(RegisterEventHandler(OnProcessExit(
-                target_action=services_spawners[i],
-                on_exit=[services_spawners[i + 1]],
-            )))
-
-        # last services → first jt
-        event_handlers.append(RegisterEventHandler(OnProcessExit(
-            target_action=services_spawners[-1],
             on_exit=[jt_spawners[0]],
         )))
 
@@ -354,7 +319,7 @@ def generate_launch_description():
         )))
 
         return [
-            ros2_control_node,
+            cynlr_main_node,
             robot_state_publisher_node,
             jsb_spawner,
             *event_handlers,

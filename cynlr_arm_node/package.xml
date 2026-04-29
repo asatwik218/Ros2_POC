@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>cynlr_arm_node</name>
+  <version>0.1.0</version>
+  <description>Plain ROS2 node per arm — state publishing, services, and NRT motion actions</description>
+  <maintainer email="satwik.agarwal@cynlr.com">Satwik Agarwal</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>geometry_msgs</depend>
+  <depend>cynlr_arm_interfaces</depend>
+  <depend>cynlr_robot</depend>
+  <depend>controller_manager</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

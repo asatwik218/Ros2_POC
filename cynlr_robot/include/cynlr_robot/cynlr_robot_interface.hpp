@@ -15,6 +15,7 @@
 #include "cynlr_arm_core/arm_interface.hpp"
 #include "cynlr_arm_core/capabilities/digital_io_controllable.hpp"
 #include "cynlr_arm_core/types.hpp"
+#include "cynlr_robot/cynlr_arm_handle.hpp"
 
 namespace cynlr_robot {
 
@@ -60,8 +61,8 @@ private:
     std::unique_ptr<cynlr::arm::ArmInterface> arm_;
     cynlr::arm::ArmConfig arm_config_;
 
-    // Raw pointer stored so the NrtPassthroughController can recover it via bit_cast
-    cynlr::arm::ArmInterface* arm_raw_ptr_{nullptr};
+    // Handle registered in CynlrArmRegistry on activate so CynlrArmNode can access it
+    std::shared_ptr<CynlrArmHandle> arm_handle_;
 
     // Tool info loaded from URDF hardware params; applied in on_activate() after enable
     cynlr::arm::ToolInfo tool_info_{};
@@ -76,12 +77,9 @@ private:
     std::array<double, kDOF> cmd_vel_{};
     std::array<double, kDOF> cmd_eff_{};
 
-    // --- Full ArmState struct — exposed via pointer trick for CynlrStateBroadcaster ---
-    // arm_state_ is kept up-to-date in read(). arm_state_ptr_ points to it and is
-    // stored in the StateInterface as reinterpret_cast<double*>(&arm_state_ptr_),
-    // which lets the broadcaster recover the pointer via bit_cast.
+    // Full ArmState struct — kept up-to-date in read(); individual fields are
+    // exposed as standard double state interfaces for JTC/direct/cartesian controllers
     cynlr::arm::ArmState arm_state_{};
-    cynlr::arm::ArmState* arm_state_ptr_{&arm_state_};
 
     // --- Cartesian command mirrors (escape hatch #3) ---
     // Indices 0-6: pose [x,y,z,qw,qx,qy,qz], indices 7-12: wrench [fx,fy,fz,tx,ty,tz]

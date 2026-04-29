@@ -1,14 +1,3 @@
-<library path="cynlr_state_broadcaster">
-  <class name="cynlr_state_broadcaster/CynlrStateBroadcaster"
-         type="cynlr_arm_controllers::CynlrStateBroadcaster"
-         base_class_type="controller_interface::ControllerInterface">
-    <description>
-      Reads the full ArmState struct from the hardware interface via bit_cast pointer trick
-      and publishes ArmState, TCP pose, FT sensor, and external wrench topics.
-    </description>
-  </class>
-</library>
-
 <library path="cynlr_direct_command_controller">
   <class name="cynlr_direct_command_controller/CynlrDirectCommandController"
          type="cynlr_arm_controllers::CynlrDirectCommandController"
@@ -21,39 +10,15 @@
   </class>
 </library>
 
-<library path="cynlr_nrt_passthrough_controller">
-  <class name="cynlr_nrt_passthrough_controller/CynlrNrtPassthroughController"
-         type="cynlr_arm_controllers::CynlrNrtPassthroughController"
-         base_class_type="controller_interface::ControllerInterface">
-    <description>
-      Escape hatch #2: retrieves the raw ArmInterface pointer from the hardware interface
-      and hosts MoveL/MoveJ/MovePTP action servers, calling arm NRT motion methods directly.
-      Uses the arm's built-in trajectory planner without MoveIt.
-    </description>
-  </class>
-</library>
-
 <library path="cynlr_cartesian_controller">
   <class name="cynlr_cartesian_controller/CynlrCartesianController"
          type="cynlr_arm_controllers::CynlrCartesianController"
          base_class_type="controller_interface::ControllerInterface">
     <description>
-      Escape hatch #3: subscribes to a CartesianCommand topic and writes directly to the
+      Escape hatch #2: subscribes to a CartesianCommand topic and writes directly to the
       Cartesian command interfaces (pose + wrench). The hardware plugin streams these to
       the arm in CARTESIAN_MOTION_FORCE mode at 1kHz. Use for force control, visual
       servoing, and Cartesian learning policies.
-    </description>
-  </class>
-</library>
-
-<library path="cynlr_arm_services">
-  <class name="cynlr_arm_services/CynlrArmServices"
-         type="cynlr_arm_controllers::CynlrArmServices"
-         base_class_type="controller_interface::ControllerInterface">
-    <description>
-      Non-RT service host. Recovers the raw ArmInterface pointer from the hardware
-      interface and exposes ROS2 services: clear_fault, set_tool, zero_ft_sensor.
-      No-op update() — runs on the controller_manager executor alongside RT controllers.
     </description>
   </class>
 </library>

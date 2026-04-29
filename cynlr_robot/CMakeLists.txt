@@ -18,11 +18,13 @@ find_package(cynlr_arm_core REQUIRED)
 
 add_library(cynlr_robot SHARED
     src/cynlr_robot_interface.cpp
+    src/cynlr_arm_registry.cpp
 )
 
 target_include_directories(cynlr_robot
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
 )
 
 ament_target_dependencies(cynlr_robot
@@ -50,9 +52,9 @@ set_target_properties(cynlr_robot PROPERTIES
 
 pluginlib_export_plugin_description_file(hardware_interface cynlr_robot_plugin.xml)
 
-install(TARGETS cynlr_robot DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
 
+install(TARGETS cynlr_robot DESTINATION lib)
 ament_export_include_directories(include)
 ament_export_libraries(cynlr_robot)
 ament_export_dependencies(hardware_interface pluginlib rclcpp rclcpp_lifecycle)

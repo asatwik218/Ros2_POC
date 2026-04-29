@@ -14,6 +14,7 @@
 
 #include "cynlr_arm_core/arm_factory.hpp"
 #include "cynlr_arm_core/error.hpp"
+#include "cynlr_robot/cynlr_arm_registry.hpp"
 
 namespace cynlr_robot {
 
@@ -134,7 +135,6 @@ hardware_interface::CallbackReturn CynlrRobotInterface::on_init(
             prefix_.c_str(), arm_config_.vendor.c_str());
         return hardware_interface::CallbackReturn::ERROR;
     }
-    arm_raw_ptr_ = arm_.get();
 
     // Pre-fill command buffers with NaN — write() skips NaN commands
     cmd_pos_.fill(std::numeric_limits<double>::quiet_NaN());
@@ -197,6 +197,34 @@ hardware_interface::CallbackReturn CynlrRobotInterface::on_activate(
         arm_state_ = *st;
     }
 
+    // Populate and register the arm handle so CynlrArmNode can access it
+    arm_handle_ = std::make_shared<CynlrArmHandle>();
+    arm_handle_->get_state = [this]() -> std::optional<cynlr::arm::ArmState> {
+        auto r = arm_->get_state();
+        if (!r) return std::nullopt;
+        return *r;
+    };
+    arm_handle_->clear_fault     = [this]() { return arm_->clear_fault(); };
+    arm_handle_->set_tool        = [this](const cynlr::arm::ToolInfo& t) { return arm_->set_tool(t); };
+    arm_handle_->zero_ft_sensor  = [this]() { return arm_->zero_ft_sensor(); };
+    arm_handle_->move_l   = [this](const cynlr::arm::CartesianTarget& tgt, const cynlr::arm::MotionParams& p) {
+        return arm_->move_l(tgt, p);
+    };
+    arm_handle_->move_j   = [this](const cynlr::arm::JointTarget& tgt, const cynlr::arm::MotionParams& p) {
+        return arm_->move_j(tgt, p);
+    };
+    arm_handle_->move_ptp = [this](const cynlr::arm::CartesianTarget& tgt, const cynlr::arm::MotionParams& p) {
+        return arm_->move_ptp(tgt, p);
+    };
+    arm_handle_->is_motion_complete = [this]() -> std::optional<bool> {
+        auto r = arm_->is_motion_complete();
+        if (!r) return std::nullopt;
+        return *r;
+    };
+    arm_handle_->stop = [this]() { return arm_->stop(); };
+
+    CynlrArmRegistry::instance().register_arm(prefix_, arm_handle_);
+
     RCLCPP_INFO(getLogger(), "[%s] Arm is active", prefix_.c_str());
     return hardware_interface::CallbackReturn::SUCCESS;
 }
@@ -205,6 +233,9 @@ hardware_interface::CallbackReturn CynlrRobotInterface::on_deactivate(
     const rclcpp_lifecycle::State&)
 {
     RCLCPP_INFO(getLogger(), "[%s] Stopping arm...", prefix_.c_str());
+
+    CynlrArmRegistry::instance().unregister_arm(prefix_);
+    arm_handle_.reset();
 
     if (active_mode_ != ActiveMode::NONE)
         arm_->stop_streaming();
@@ -251,15 +282,6 @@ CynlrRobotInterface::export_state_interfaces()
         si.emplace_back(prefix_ + "tcp", "pose_" + std::to_string(i), &arm_state_.tcp_pose[i]);
     for (int i = 0; i < 6; ++i)
         si.emplace_back(prefix_ + "tcp", "vel_" + std::to_string(i),  &arm_state_.tcp_velocity[i]);
-
-    // Full ArmState struct — pointer stored via bit_cast trick.
-    // CynlrStateBroadcaster reads this and casts it back to ArmState*.
-    si.emplace_back(prefix_ + "cynlr_arm_state", "full_state_ptr",
-        reinterpret_cast<double*>(&arm_state_ptr_));
-
-    // Raw ArmInterface* — CynlrNrtPassthroughController reads this to call NRT moves directly.
-    si.emplace_back(prefix_ + "cynlr_arm_ctrl", "arm_interface_ptr",
-        reinterpret_cast<double*>(&arm_raw_ptr_));
 
     // GPIO inputs
     for (int i = 0; i < kIOPorts; ++i)

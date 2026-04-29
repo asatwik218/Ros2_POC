@@ -9,6 +9,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <exec_depend>cynlr_robot</exec_depend>
+  <exec_depend>cynlr_arm_node</exec_depend>
   <exec_depend>cynlr_arm_description</exec_depend>
   <exec_depend>cynlr_arm_controllers</exec_depend>
   <exec_depend>cynlr_arm_interfaces</exec_depend>
