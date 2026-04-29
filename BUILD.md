@@ -37,7 +37,42 @@ sudo apt install -y \
   ros-jazzy-joint-trajectory-controller
 ```
 
-`cynlr_arm_core` is pre-built and installed at `~/cynlr_software/cynlr_install/`.
+---
+
+## Build flexiv_rdk from submodule (one-time)
+
+`flexiv_rdk` (v1.8) is included as a git submodule at `flexiv_rdk/`.
+
+```bash
+cd ~/cynlr_software/Cpp_App_Test
+git submodule update --init --recursive
+
+# Build and install flexiv_rdk
+cmake -S flexiv_rdk -B flexiv_rdk/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=$HOME/cynlr_software/rdk_install
+cmake --build flexiv_rdk/build --config Release -j$(nproc)
+cmake --install flexiv_rdk/build
+```
+
+The install lands in `~/cynlr_software/rdk_install/` (already referenced by `cynlr_arm_core`).
+
+---
+
+## Build cynlr_arm_core (one-time)
+
+`cynlr_arm_core` is a pure-CMake package (not colcon). It wraps flexiv_rdk behind
+a stable facade and installs to `cynlr_install/`.
+
+```bash
+cd ~/cynlr_software/Cpp_App_Test/cynlr_arm_core
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$HOME/cynlr_software/rdk_install" \
+  -DCMAKE_INSTALL_PREFIX=$HOME/cynlr_software/cynlr_install
+cmake --build build --config Release -j$(nproc)
+cmake --install build
+```
 
 ---
 
