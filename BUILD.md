@@ -1,41 +1,43 @@
 # Build & Test Guide
 
-## Status (as of 2026-04-27)
+## Status (as of 2026-04-29)
 
-| Package | Built | Tests |
+| Package | Built | Notes |
 |---|---|---|
-| cynlr_arm_core | ✅ (Conan, installs to `~/cynlr_software/cynlr_install`) | ✅ unit tests pass |
+| cynlr_arm_core | ✅ (Conan, installs to `~/cynlr_software/cynlr_install`) | unit tests pass |
+| flexiv_description | ✅ colcon | humble branch |
 | cynlr_arm_interfaces | ✅ colcon | — |
-| cynlr_arm_service | ✅ colcon | ✅ 5/5 integration tests pass |
-| cynlr_hardware | ✅ colcon | — |
-| cynlr_arm_controllers | ✅ colcon | — |
-| cynlr_camera | ✅ colcon | — |
-| cynlr_arm_description | ✅ colcon | ✅ xacro parses cleanly |
+| cynlr_robot | ✅ colcon | hardware plugin + CynlrArmRegistry |
+| cynlr_arm_node | ✅ colcon | cynlr_main executable + CynlrArmNode lib |
+| cynlr_arm_controllers | ✅ colcon | 2 plugins: direct_cmd, cartesian |
+| cynlr_arm_description | ✅ colcon | xacro parses cleanly |
 | cynlr_moveit_config | ✅ colcon | — |
-| cynlr_bringup | ✅ colcon | ✅ system launch: 16 controllers, 7 active, joint_states ~1000 Hz |
-| flexiv_description | ✅ colcon (humble branch) | — |
+| cynlr_bringup | ✅ colcon | system launch verified |
 
-**NEXT STEP: Escape hatch switching tests** — see section below.
+**Deleted packages** (replaced by cynlr_robot + cynlr_arm_node):
+- `cynlr_arm_service` — removed
+- `cynlr_hardware` — removed (was `CynlrHardwareInterface`)
+- `cynlr_arm_controllers/cynlr_state_broadcaster` — removed
+- `cynlr_arm_controllers/cynlr_arm_services` — removed
+- `cynlr_arm_controllers/cynlr_nrt_passthrough_controller` — removed
 
 ---
 
 ## One-time prerequisites
 
 ```bash
-# 1. ros2-control stack + xacro
 sudo apt install -y \
   ros-jazzy-ros2-control \
   ros-jazzy-ros2-controllers \
   ros-jazzy-realtime-tools \
   ros-jazzy-hardware-interface \
-  ros-jazzy-camera-info-manager \
   ros-jazzy-xacro \
-  ros-jazzy-robot-state-publisher
-
-# 2. cynlr_arm_core is pre-built; already installed at:
-#    ~/cynlr_software/cynlr_install/
-#    (CMAKE_PREFIX_PATH must include this path when building colcon packages)
+  ros-jazzy-robot-state-publisher \
+  ros-jazzy-joint-state-broadcaster \
+  ros-jazzy-joint-trajectory-controller
 ```
+
+`cynlr_arm_core` is pre-built and installed at `~/cynlr_software/cynlr_install/`.
 
 ---
 
@@ -49,10 +51,9 @@ colcon build \
   --packages-select \
     flexiv_description \
     cynlr_arm_interfaces \
-    cynlr_arm_service \
-    cynlr_hardware \
+    cynlr_robot \
+    cynlr_arm_node \
     cynlr_arm_controllers \
-    cynlr_camera \
     cynlr_arm_description \
     cynlr_moveit_config \
     cynlr_bringup \
@@ -64,65 +65,59 @@ source install/setup.bash
 
 ---
 
-## Run integration tests (cynlr_arm_service)
-
-```bash
-cd ~/cynlr_software/Cpp_App_Test
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
-colcon test --packages-select cynlr_arm_service --event-handlers console_direct+
-colcon test-result --all --verbose
-# Expected: 5/5 PASS
-```
-
----
-
-## System smoke test
+## System smoke test — single arm (recommended first run)
 
 ```bash
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ros2 launch cynlr_bringup cynlr_system.launch.py \
-  vendor:=sim sn_left:=sim0 sn_center:=sim1 sn_right:=sim2 \
-  use_rviz:=false use_moveit:=false
+  use_rviz:=false use_moveit:=false \
+  config_file:=$(ros2 pkg prefix cynlr_bringup)/share/cynlr_bringup/config/cynlr_single_arm_config.yaml
 ```
 
 In a second terminal:
 ```bash
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
-ros2 control list_controllers          # 16 controllers: 7 active, 9 inactive
-ros2 topic echo /arm_left_arm_state --once  # ArmState messages
-ros2 topic hz /joint_states                 # ~1000 Hz
+ros2 control list_controllers
+# Expected: 4 controllers
+#   joint_state_broadcaster    [active]
+#   arm_left_jt_controller     [active]
+#   arm_left_direct_cmd        [inactive]
+#   arm_left_cartesian         [inactive]
+
+ros2 topic hz /joint_states   # confirms state broadcaster is publishing
 ```
+
+## System smoke test — three arms
+
+```bash
+source /opt/ros/jazzy/setup.bash && source install/setup.bash
+ros2 launch cynlr_bringup cynlr_system.launch.py use_rviz:=false use_moveit:=false
+# Default config: cynlr_system_config.yaml (arm_left=Flexiv, arm_center/right=sim)
+```
+
+Expected: 10 controllers total (4×arm_left + 3×arm_center + 3×arm_right).
+On WSL: arm_center/arm_right JT controllers may timeout due to non-RT jitter from
+Flexiv's stream_command blocking the update thread. On a real-time OS this is fixed.
 
 ---
 
-## NEXT STEP: Escape hatch switching
+## Escape hatch switching
 
-With the system launch running, switch controllers and test each hatch:
+With system running, test controller switches:
 
 ```bash
-# Hatch #1 — direct joint commands
+# Hatch #1 — direct joint commands (arm holds RT streaming; JT releases it)
 ros2 control switch_controllers \
   --deactivate arm_left_jt_controller --activate arm_left_direct_cmd --strict
 ros2 topic pub /arm_left_joint_cmd_direct \
   cynlr_arm_interfaces/msg/JointCommand \
   "{mode: 0, joint_position: [0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 0.0]}" --once
-# Verify: ros2 topic echo /arm_left_arm_state --once  (joint_positions should shift)
 
 # Switch back
 ros2 control switch_controllers \
   --deactivate arm_left_direct_cmd --activate arm_left_jt_controller --strict
 
-# Hatch #2 — NRT passthrough (arm's own planner)
-ros2 control switch_controllers \
-  --deactivate arm_left_jt_controller --activate arm_left_nrt --strict
-ros2 action send_goal /arm_left_move_j cynlr_arm_interfaces/action/MoveJ \
-  "{target_positions: [0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], max_joint_vel: 0.5, max_joint_acc: 1.0}"
-
-# Switch back
-ros2 control switch_controllers \
-  --deactivate arm_left_nrt --activate arm_left_jt_controller --strict
-
-# Hatch #3 — Cartesian command
+# Hatch #2 — Cartesian command
 ros2 control switch_controllers \
   --deactivate arm_left_jt_controller --activate arm_left_cartesian --strict
 ros2 topic pub /arm_left_cartesian_cmd \
@@ -136,12 +131,43 @@ ros2 control switch_controllers \
 
 ---
 
+## Architecture overview
+
+```
+cynlr_system_config.yaml  (single source of truth: arm count, names, serials, mounts)
+         │
+         ▼
+cynlr_system.launch.py
+  generates URDF string + controller YAML tempfile → spawns cynlr_main
+
+cynlr_main  (3 threads)
+  cm_executor (main)    — ROS service/topic callbacks for ControllerManager
+  cm_update_thread      — 500 Hz: cm->read(), cm->update(), cm->write()
+  arm_thread            — CynlrArmNode executor per arm
+
+  ControllerManager
+    CynlrRobotInterface × N   (on_activate → registers CynlrArmHandle in CynlrArmRegistry)
+    joint_state_broadcaster
+    arm_*_jt_controller × N   (MoveIt / FollowJointTrajectory)
+    arm_*_direct_cmd × N      (escape hatch — inactive by default)
+    arm_*_cartesian × N       (escape hatch — inactive by default)
+
+  CynlrArmNode × N
+    Publishers: tcp_pose, wrench_tcp, wrench_raw, arm_state
+    Services:   clear_fault, set_tool, zero_ft_sensor
+    Actions:    move_l, move_j, move_ptp
+```
+
+---
+
 ## Key paths
 
 | Item | Path |
 |---|---|
 | cynlr_arm_core install | `~/cynlr_software/cynlr_install/` |
-| flexiv_description | `Cpp_App_Test/flexiv_description/` (humble branch, built with colcon) |
-| Architecture doc | `thoughts/shared/docs/architecture.md` |
-| Implementation plan | `thoughts/shared/plans/2026-04-13-robot-arm-service.md` |
-| Claude conversation memory | `.claude/` (included in repo) |
+| flexiv_description | `Cpp_App_Test/flexiv_description/` (humble branch) |
+| System config (3-arm) | `cynlr_bringup/config/cynlr_system_config.yaml` |
+| System config (1-arm) | `cynlr_bringup/config/cynlr_single_arm_config.yaml` |
+| Hardware plugin | `cynlr_robot/src/cynlr_robot_interface.cpp` |
+| Main executable | `cynlr_arm_node/src/cynlr_main.cpp` |
+| Arm node | `cynlr_arm_node/src/cynlr_arm_node.cpp` |

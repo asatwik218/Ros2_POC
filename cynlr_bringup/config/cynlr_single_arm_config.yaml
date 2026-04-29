@@ -1,0 +1,15 @@
+system:
+  update_rate: 500  # Hz
+
+arms:
+  - name: arm_left
+    vendor: flexiv
+    serial_number: "Rizon4s-BYysH5"
+    mount:
+      xyz: [0.0, 0.0, 0.0]
+      rpy: [0.0, 0.0, 0.0]
+    tool:
+      mass_kg: 0.5
+      com: [0.0, 0.0, 0.05]
+      inertia: [0.001, 0.001, 0.001, 0.0, 0.0, 0.0]
+      tcp_pose: [0.0, 0.0, 0.1, 1.0, 0.0, 0.0, 0.0]
