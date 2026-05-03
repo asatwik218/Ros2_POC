@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4"
+      main_tree_to_execute="Untitled">
+  <BehaviorTree ID="Untitled">
+    <Sequence>
+      <MoveJoints robot_sn="Rizon4s"
+                  target_positions="0.1,0.2,0.3,0.4,0.5,0.6,0.7"
+                  max_joint_vel="0.3"
+                  max_joint_acc="0.5"
+                  success="{success_or_not}"
+                  current_positions="{current_robot_pose}"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- Description of Node Models (used by Groot) -->
+  <TreeNodesModel>
+    <Action ID="MoveJoints">
+      <input_port name="robot_sn"
+                  type="string"/>
+      <input_port name="target_positions"
+                  type="std::array&lt;double,7&gt;"/>
+      <input_port name="max_joint_vel"
+                  type="double"/>
+      <input_port name="max_joint_acc"
+                  type="double"/>
+      <output_port name="success"
+                   type="bool"/>
+      <output_port name="current_positions"
+                   type="std::array&lt;double,7&gt;"/>
+    </Action>
+  </TreeNodesModel>
+
+</root>
