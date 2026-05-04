@@ -14,21 +14,7 @@
 
 using namespace std::chrono_literals;
 
-namespace BT {
-template <>
-inline std::array<double, 7> convertFromString(StringView str)
-{
-  std::array<double, 7> out{};
-  std::string s(str);
-  std::replace(s.begin(), s.end(), ',', ' ');
-  std::istringstream ss(s);
-  for (auto& v : out) {
-    if (!(ss >> v))
-      throw RuntimeError("MoveJoints: expected 7 doubles, got fewer");
-  }
-  return out;
-}
-} 
+
 
 int main(int argc, char** argv)
 {

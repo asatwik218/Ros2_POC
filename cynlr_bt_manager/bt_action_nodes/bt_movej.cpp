@@ -6,13 +6,28 @@ MoveJointsAction::MoveJointsAction(const std::string& name,
     : BT::RosActionNode<MoveJoints>(name, config, params)
 {}
 
+namespace BT {
+template <>
+inline std::array<double, 7> convertFromString(StringView str)
+{
+  std::array<double, 7> out{};
+  std::string s(str);
+  std::replace(s.begin(), s.end(), ',', ' ');
+  std::istringstream ss(s);
+  for (auto& v : out) {
+    if (!(ss >> v))
+      throw RuntimeError("MoveJoints: expected 7 doubles, got fewer");
+  }
+  return out;
+}
+} 
+
 BT::PortsList MoveJointsAction::providedPorts()
 {
   return {
     // Inputs
-    BT::InputPort<std::array<double,7>>(
-        "target_positions",
-        "7 joint targets in radians, comma-separated"),
+    BT::InputPort<std::string>("robot_sn"),
+    BT::InputPort<std::array<double,7>>("target_positions"),
     BT::InputPort<double>(
         "max_joint_vel",
         0.0,
