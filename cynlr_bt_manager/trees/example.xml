@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" main_tree_to_execute="Main">
+
+  <!-- Main tree passes data INTO the subtree -->
+  <BehaviorTree ID="Main">
+    <Sequence>
+      <AlwaysSuccess/>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- Subtree declares its own ports via _autoremap or explicit mapping -->
+  <BehaviorTree ID="MoveSequence">
+    <Sequence>
+      <MoveJoints robot_sn="{robot_sn}"
+                  target_positions="{target}"
+                  max_joint_vel="0.3"
+                  max_joint_acc="0.5"
+                  success="{success}"
+                  current_positions="{current_robot_pose}"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <TreeNodesModel>
+    <SubTree ID="MoveSequence">
+      <input_port  name="robot_sn" type="string"/>
+      <input_port  name="target"   type="std::array&lt;double,7&gt;"/>
+      <output_port name="success"  type="bool"/>
+    </SubTree>
+  </TreeNodesModel>
+
+</root>

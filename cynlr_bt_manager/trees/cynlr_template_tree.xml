@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4"
+      main_tree_to_execute="MyTree">
+  <BehaviorTree ID="MyTree">
+    <AlwaysSuccess/>
+  </BehaviorTree>
+
+  <!-- Description of Node Models (used by Groot) -->
+  <TreeNodesModel>
+    <Action ID="MoveJoints">
+      <input_port name="robot_sn" type="string"/>
+      <input_port name="target_positions" type="std::array<double,7>"/>
+      <input_port name="max_joint_vel" type="double"/>
+      <input_port name="max_joint_acc" type="double"/>
+      <output_port name="success" type="bool"/>
+      <output_port name="current_positions" type="std::array<double,7>"/>
+    </Action>
+
+    <Action ID="RegisterRobot">
+      <input_port name="robot_sn" type="string"/>
+      <output_port name="robot_sn" type="string"/>
+    </Action>
+  </TreeNodesModel>
+
+</root>
