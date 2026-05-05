@@ -130,7 +130,13 @@ Expected<void> FlexivArm::run_auto_recovery() {
 Expected<void> FlexivArm::move_l(const CartesianTarget& target, const MotionParams& params) {
     if (!robot_) return make_error(ErrorCode::NOT_CONNECTED, "FlexivArm: not connected");
     try {
+        // Stop current motion while RT streaming continues (required — stopping streaming
+        // before SwitchMode causes timeliness faults that block the mode switch).
+        robot_->Stop();
         robot_->SwitchMode(flexiv::rdk::Mode::NRT_CARTESIAN_MOTION_FORCE);
+        // Mode switched: mark NRT active so write() skips stream_command (which would
+        // fail silently in NRT mode) and so cmd_pos_ gets reseeded on RT restore.
+        nrt_active_ = true;
         // API: SendCartesianMotionForce(array<double,7> pose, array<double,6> wrench, ...)
         robot_->SendCartesianMotionForce(
             target.pose,
@@ -139,8 +145,18 @@ Expected<void> FlexivArm::move_l(const CartesianTarget& target, const MotionPara
             params.max_linear_vel,
             params.max_angular_vel,
             params.max_linear_acc);
+        // Give the robot's motion generator time to start before polling stopped()
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        // Block until motion completes (or 30-second safety timeout)
+        for (int i = 0; i < 1500 && !robot_->stopped(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Restore previous RT streaming mode so the HW interface write() loop resumes cleanly
+        if (stream_mode_ == StreamMode::JOINT_POSITION)
+            robot_->SwitchMode(flexiv::rdk::Mode::RT_JOINT_POSITION);
+        nrt_active_ = false;
         return {};
     } catch (const std::exception& e) {
+        nrt_active_ = false;
         return make_error(ErrorCode::MOTION_FAILED,
             std::string("FlexivArm::move_l failed: ") + e.what());
     }
@@ -149,15 +165,31 @@ Expected<void> FlexivArm::move_l(const CartesianTarget& target, const MotionPara
 Expected<void> FlexivArm::move_j(const JointTarget& target, const MotionParams& params) {
     if (!robot_) return make_error(ErrorCode::NOT_CONNECTED, "FlexivArm: not connected");
     try {
+        // Stop current motion while RT streaming continues (required — stopping streaming
+        // before SwitchMode causes timeliness faults that block the mode switch).
+        robot_->Stop();
         robot_->SwitchMode(flexiv::rdk::Mode::NRT_JOINT_POSITION);
+        // Mode switched: mark NRT active so write() skips stream_command (which would
+        // fail silently in NRT mode) and so cmd_pos_ gets reseeded on RT restore.
+        nrt_active_ = true;
         // API: SendJointPosition(positions, velocities, max_vel, max_acc) — 4 args
         std::vector<double> pos(target.positions.begin(), target.positions.end());
         std::vector<double> vel(7, 0.0);  // target velocity = 0 (let motion gen handle)
         std::vector<double> max_vel(7, params.max_joint_vel);
         std::vector<double> max_acc(7, params.max_joint_acc);
         robot_->SendJointPosition(pos, vel, max_vel, max_acc);
+        // Give the robot's motion generator time to start before polling stopped()
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        // Block until motion completes (or 30-second safety timeout)
+        for (int i = 0; i < 1500 && !robot_->stopped(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Restore previous RT streaming mode so the HW interface write() loop resumes cleanly
+        if (stream_mode_ == StreamMode::JOINT_POSITION)
+            robot_->SwitchMode(flexiv::rdk::Mode::RT_JOINT_POSITION);
+        nrt_active_ = false;
         return {};
     } catch (const std::exception& e) {
+        nrt_active_ = false;
         return make_error(ErrorCode::MOTION_FAILED,
             std::string("FlexivArm::move_j failed: ") + e.what());
     }
@@ -202,6 +234,7 @@ Expected<void> FlexivArm::start_streaming(StreamMode mode) {
 
 Expected<void> FlexivArm::stream_command(const StreamCommand& cmd) {
     if (!robot_) return make_error(ErrorCode::NOT_CONNECTED, "FlexivArm: not connected");
+    if (nrt_active_) return {};  // NRT motion in progress — skip RT streaming this cycle
     try {
         switch (cmd.mode) {
             case StreamMode::JOINT_POSITION: {

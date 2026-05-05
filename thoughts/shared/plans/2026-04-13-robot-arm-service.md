@@ -129,256 +129,231 @@ RT topic subscribers write to `RTThread` lock-free buffer. State publish timer r
 
 ---
 
-## Phase 8: Integration Tests 🔲 PENDING
+## Phase 8: Integration Tests — N/A (superseded)
 
-Automated integration tests using `launch_testing`. Launch arm service with SimArm, drive via ROS2 client calls, verify behavior.
-
-**Build order (WSL2):**
-```bash
-# Package cynlr_arm_core
-cd /path/to/cynlr_arm_core
-conan create . --profile=linux-gcc -s build_type=Release --build=missing
-
-# Install CMake config for colcon to find
-conan install --requires=cynlr_arm_core/0.1.0 --profile=linux-gcc -s build_type=Release \
-    -g CMakeDeps --output-folder=/opt/cynlr_cmake
-
-# Build ROS2 packages
-source /opt/ros/jazzy/setup.bash
-colcon build --packages-select cynlr_arm_interfaces cynlr_arm_service \
-    --cmake-args -DCMAKE_PREFIX_PATH=/opt/cynlr_cmake
-```
+`cynlr_arm_service` was deleted before this phase was implemented. Integration testing
+for the NRT supervision layer is now covered by Phase 17 (CynlrArmNode).
 
 ---
 
 ## Architecture Pivot (2026-04-23): ros2_control Multi-Arm System
 
-At this point, the architecture expanded from a standalone single-arm service to a full ros2_control-based multi-arm system. The `cynlr_arm_service` was slimmed to a supervision-only node; motion control responsibilities moved into the ros2_control layer.
+At this point, the architecture expanded from a standalone single-arm service to a full ros2_control-based multi-arm system. The initial implementation (phases 9–16 below) was then refined through three subsequent commits that significantly restructured the ros2_control layer. See "Architecture Refinements" below for the final state.
 
-**Key design decisions:**
-- Three separate hardware plugin instances (one per arm prefix) in a single controller manager at 1000 Hz
-- `ArmState*` and `ArmInterface*` pointers passed through `double*` StateInterface slots using the bit_cast trick from Flexiv's `flexiv_robot_states.hpp`
+**Initial key design decisions:**
+- Three separate hardware plugin instances (one per arm prefix) in a single controller manager
 - NaN sentinel in all command buffers — `write()` skips sending if any command is NaN
 - `vendor:=sim` → `SimArm`, `vendor:=flexiv` → real hardware, zero code change
 
 ---
 
-## Phase 9: cynlr_hardware — ros2_control Plugin ✅ DONE
+## Phase 9: cynlr_hardware — ros2_control Plugin ✅ DONE (superseded — see refinements)
 
-**Files:**
-- `cynlr_hardware/include/cynlr_hardware/cynlr_hardware_interface.hpp`
-- `cynlr_hardware/src/cynlr_hardware_interface.cpp`
-- `cynlr_hardware/cynlr_hardware_plugin.xml`
-- `cynlr_hardware/CMakeLists.txt`, `package.xml`
-
-**Class: `CynlrHardwareInterface : hardware_interface::SystemInterface`**
-
-`on_init()`: reads `prefix`, `vendor`, `serial_number`, `ip_address` from URDF `<hardware>` params; calls `create_arm(config)`; NaN-fills all command buffers.
-
-`on_activate()`: `arm_->connect()` → `arm_->clear_fault()` → `arm_->enable()` → seeds `cmd_pos_` from current state.
-
-`on_deactivate()`: `arm_->stop_streaming()` → `arm_->stop()` → `arm_->disconnect()`.
-
-`export_state_interfaces()`:
-- 7 joints × {position, velocity, effort}
-- FT sensor: 18 doubles (`{prefix}ft_sensor/raw_0..5`, `ext_tcp_0..5`, `ext_world_0..5`)
-- TCP: 7 pose + 6 velocity doubles
-- `{prefix}cynlr_arm_state/full_state_ptr` — `ArmState*` bit-cast as `double*`
-- `{prefix}cynlr_arm_ctrl/arm_interface_ptr` — `ArmInterface*` bit-cast as `double*`
-- GPIO: 18 input doubles
-
-`export_command_interfaces()`:
-- 7 joints × {position, velocity, effort}
-- Cartesian: 13 GPIO doubles (`{prefix}cartesian_cmd/pose_0..6`, `wrench_0..5`)
-- GPIO: 18 output doubles
-
-`write()` dispatches by `ActiveMode`: POSITION → `JOINT_POSITION` stream, EFFORT → `JOINT_TORQUE` stream, CARTESIAN → `CARTESIAN_MOTION_FORCE` stream.
-
-**CMakeLists:** links `cynlr::cynlr_arm_core`, embeds RPATH to libdir, `pluginlib_export_plugin_description_file`.
+Initial hardware plugin `CynlrHardwareInterface`. Exported `ArmState*` and `ArmInterface*`
+via bit_cast trick through `double*` StateInterface slots. Later replaced by `cynlr_robot`.
 
 ---
 
 ## Phase 10: cynlr_arm_description — Three-Arm URDF ✅ DONE
 
-**Files:**
-- `cynlr_arm_description/urdf/cynlr_rizon7_macro.urdf.xacro` — per-arm macro with full ros2_control block
-- `cynlr_arm_description/urdf/cynlr_arm_system.urdf.xacro` — top-level, instantiates 3 arms
-
-**xacro args:** `sn_left`, `sn_center`, `sn_right`, `vendor` (default `sim`)
-
-Each arm: `<ros2_control name="${prefix}system" type="system">` block with all interface declarations. Three separate hardware plugin instances. Joint names: `arm_left_joint1` … `arm_right_joint7`.
-
-**Note:** Depends on `flexiv_description` (external: https://github.com/flexivrobotics/flexiv_description, branch humble). Must be cloned separately before building.
+Per-arm macro `cynlr_rizon7_macro.urdf.xacro` + top-level `cynlr_arm_system.urdf.xacro`.
+Later: URDF generation moved to launch time (OpaqueFunction pattern), driven by
+`cynlr_system_config.yaml`. No static URDF file in install tree.
 
 ---
 
-## Phase 11: cynlr_arm_controllers — Four Controller Plugins ✅ DONE
+## Phase 11: cynlr_arm_controllers — Four Controller Plugins ✅ DONE (superseded — see refinements)
 
-All four built as SHARED libs in a single `cynlr_arm_controllers` package.
-
-### CynlrStateBroadcaster
-Claims `{prefix}cynlr_arm_state/full_state_ptr` state interface. Recovers `ArmState*` via bit_cast. Publishes `/{prefix}arm_state` (ArmState), TCP pose, FT wrenches using `RealtimePublisher`. Configurable decimation for full ArmState vs. high-freq TCP/wrench.
-
-### CynlrDirectCommandController (Escape Hatch #1)
-Claims 7 joint position + velocity command interfaces. Subscribes to `/{prefix}joint_cmd_direct` (JointCommand) with BEST_EFFORT QoS. Uses `RealtimeBuffer` for NRT→RT handoff. `on_activate()` seeds from current positions to prevent lurch.
-
-### CynlrNrtPassthroughController (Escape Hatch #2)
-Claims `{prefix}cynlr_arm_ctrl/arm_interface_ptr` state interface (read-only). `on_activate()` recovers `ArmInterface*` via bit_cast. Hosts MoveL, MoveJ, MovePTP action servers. Goals execute in detached threads calling `arm_->move_l/j/ptp()` directly.
-
-### CynlrCartesianController (Escape Hatch #3)
-Claims 13 `cartesian_cmd` GPIO command interfaces (7 pose + 6 wrench). Subscribes to `/{prefix}cartesian_cmd` (CartesianCommand) with BEST_EFFORT QoS. NaN-fills on deactivate. Hardware `write()` detects CARTESIAN mode and calls `arm_->stream_command({CARTESIAN_MOTION_FORCE, ...})`.
+Initially: `CynlrStateBroadcaster`, `CynlrDirectCommandController`, `CynlrNrtPassthroughController`, `CynlrCartesianController`. After refinements, only `direct_cmd` and `cartesian` remain.
 
 ---
 
 ## Phase 12: cynlr_arm_interfaces — Extended ✅ DONE
 
-Added `SwitchController.srv` for programmatic per-arm controller switching:
-
-```
-string arm           # "left", "center", "right"
-string[] activate
-string[] deactivate
-uint8 strictness     # 0=BEST_EFFORT, 1=STRICT
----
-bool success
-string message
-```
-
-Updated `CMakeLists.txt` to register the new service.
-
-**Updated OperationalStatus.msg comment:** `mode` field now maps to `ArmMode` enum values: `0=IDLE 1=CONNECTED 2=ENABLED 3=FAULT` (NRT_MODE and RT_MODE removed — ros2_control manages these now).
+`cynlr_arm_interfaces` package with all messages, services, actions in use. The `SwitchController.srv` that was planned was not ultimately added — controller switching uses `ros2 control switch_controllers` directly.
 
 ---
 
-## Phase 13: cynlr_bringup — Launch Files + Controller YAML ✅ DONE
+## Phase 13: cynlr_bringup — Launch Files + Config YAML ✅ DONE
 
-**Files:**
-- `cynlr_bringup/config/cynlr_controllers.yaml` — controller manager at 1000 Hz, all 12 controllers (3 arms × 4 variants) with full per-controller parameters
-- `cynlr_bringup/launch/cynlr_system.launch.py`
-
-**Launch args:** `sn_left`, `sn_center`, `sn_right`, `vendor` (default `sim`), `use_moveit`, `use_rviz`
-
-**Startup chain (OnProcessExit):**
-1. `ros2_control_node` + `robot_state_publisher`
-2. `joint_state_broadcaster`
-3. `arm_left_state_broadcaster` → `arm_center_state_broadcaster` → `arm_right_state_broadcaster`
-4. `arm_left_jt_controller` → `arm_center_jt_controller` → `arm_right_jt_controller`
-5. All 9 escape-hatch controllers loaded `--inactive` (direct_cmd, nrt, cartesian per arm)
-6. `rviz2` (if `use_rviz:=true`) + `move_group` (if `use_moveit:=true`)
-
-**Escape hatch switching:**
-```bash
-ros2 control switch_controllers \
-  --activate arm_left_direct_cmd \
-  --deactivate arm_left_jt_controller arm_left_nrt arm_left_cartesian
-```
+`cynlr_system.launch.py` with `cynlr_system_config.yaml` as single source of truth.
+Launch arg is `config_file:=<path>` (not per-arm vendor/serial args).
 
 ---
 
-## Phase 14: cynlr_arm_service — Slimmed to Supervision Node ✅ DONE
+## Phase 14: cynlr_arm_service — Deleted ✅ DONE
 
-**Removed** (moved to ros2_control layer):
-- Action servers (MoveL, MoveJ, MovePTP) → `CynlrNrtPassthroughController`
-- `sub_joint_cmd_`, `sub_cart_cmd_` → handled by `CynlrDirectCommandController` / `CynlrCartesianController`
-- `state_publish_timer_` (ArmState) → `CynlrStateBroadcaster` handles this
-- `RTThread` → controller_manager is the 1kHz loop now
-- `SetMode` service → `ros2 control switch_controllers` handles mode switching
-- `NRT_MODE` and `RT_MODE` from `ArmMode` enum
-
-**Kept** (supervision and NRT configuration only):
-- All NRT config services: connect, disconnect, enable, stop, clear_fault, set_tool, zero_ft, auto_recovery, set/get digital I/O
-- `pub_fault_`, `pub_status_`
-- `fault_poll_timer_` at 5Hz (200ms)
-- `ModeManager` with 4 states: IDLE → CONNECTED → ENABLED → FAULT
-
-**Role:** Supervision node. Holds a separate NRT `ArmInterface` instance for configuration commands. Flexiv SDK supports concurrent connections for NRT operations alongside the 1kHz RT connection owned by `CynlrHardwareInterface`.
+Initially slimmed to a supervision node; then fully deleted in the single-connection
+architecture refactor. All supervision ops (clear_fault, set_tool, zero_ft) and NRT actions
+(move_l/j/ptp) moved to `CynlrArmNode`.
 
 ---
 
 ## Phase 15: cynlr_moveit_config ✅ DONE
 
-**Files to create:**
-- `cynlr_moveit_config/config/kinematics.yaml` — KDL per arm group (swap for custom IK plugin)
-- `cynlr_moveit_config/srdf/cynlr_three_arm.srdf.xacro` — 3 planning groups + `all_arms` group
-- `cynlr_moveit_config/config/moveit_controllers.yaml` — maps `arm_*_jt_controller` → FollowJointTrajectory
-- `cynlr_moveit_config/config/sensors_3d.yaml` — OctoMap from camera point clouds
-- `cynlr_moveit_config/config/ompl_planning.yaml`
-
-**Cross-arm coordination:** `all_arms` planning group in SRDF allows MoveIt to plan for all three arms simultaneously with inter-arm collision avoidance.
-
-**Custom IK plugin (optional):** Implement `kinematics::KinematicsBase`, register as pluginlib plugin, reference in `kinematics.yaml`. MoveIt calls custom IK instead of KDL.
+KDL per arm, `all_arms` group, `moveit_controllers.yaml` maps to `arm_*_jt_controller`,
+OctoMap from `/camera_0/points`.
 
 ---
 
 ## Phase 16: cynlr_camera ✅ DONE
 
-**Class:** `StereoCameraNode : rclcpp_lifecycle::LifecycleNode`
-
-**Publishes:**
-- `/camera_N/left/image_raw`, `/camera_N/right/image_raw` — `sensor_msgs/Image`
-- `/camera_N/left/camera_info`, `/camera_N/right/camera_info`
-- `/camera_N/points` — `sensor_msgs/PointCloud2` at ~30Hz
-
-**MoveIt OctoMap integration:** `sensors_3d.yaml` → `PointCloudOctomapUpdater` consumes `/camera_N/points` → MoveIt plans collision-avoiding trajectories.
+`StereoCameraNode` publishes synthetic frames by default. Override `open_camera` /
+`close_camera` / `grab_frame` to add real hardware.
 
 ---
 
-## Phase 17: Integration Tests (ros2_control) 🔲 PENDING
+## Architecture Refinements (2026-04-23 → 2026-04-29)
 
-### SimArm smoke test
+Three commits after the initial build substantially restructured the ros2_control layer.
+The table below shows what changed:
+
+| Old | New |
+|---|---|
+| `cynlr_hardware` (`CynlrHardwareInterface`) | `cynlr_robot` (`CynlrRobotInterface` + `CynlrArmRegistry` + `CynlrArmHandle`) |
+| `cynlr_arm_service` supervision node | **Deleted** |
+| `CynlrStateBroadcaster` controller plugin | **Deleted** — state publishing in `CynlrArmNode` |
+| `CynlrNrtPassthroughController` plugin | **Deleted** — NRT actions in `CynlrArmNode` |
+| `CynlrArmServices` plugin | **Deleted** — NRT services in `CynlrArmNode` |
+| 4 controller plugins | 2 remain: `direct_cmd`, `cartesian` |
+| `ArmInterface*` bit-cast via StateInterface | `CynlrArmRegistry` process-local singleton |
+| Separate `ros2_control_node` process | `cynlr_main` container: 3-thread (cm_executor, cm_update_thread, arm_thread) |
+| Per-arm `vendor`/`sn_*` launch args | `cynlr_system_config.yaml` single source of truth |
+| `ros2_control_node` drives CM update | `cm_update_thread` in `cynlr_main` at 500 Hz |
+
+**Reason for single-connection architecture:** The original dual-connection design (one RT
+connection in `CynlrHardwareInterface`, one NRT in `cynlr_arm_service`) had a race condition
+and required managing two separate lifecycles. The new design has one `ArmInterface` instance
+per arm, owned by `CynlrRobotInterface`. `CynlrArmNode` accesses it through the handle/registry
+— no second SDK connection.
+
+**Reason for `cynlr_main` instead of `ros2_control_node`:** In Jazzy, `ControllerManager`
+does not self-schedule its update loop. A dedicated thread calling `cm->read/update/write`
+is required — the same pattern as `ros2_control_node`. Embedding it in `cynlr_main` also
+allows `CynlrArmNode` to share the process and access the registry singleton.
+
+### Current package set (all built ✅)
+
+| Package | Role |
+|---|---|
+| `cynlr_arm_core` | CMake, pure C++20 — `ArmInterface`, `SimArm`, `FlexivArm` |
+| `cynlr_arm_interfaces` | ROS2 IDL — messages, services, actions |
+| `cynlr_robot` | Hardware plugin + `CynlrArmRegistry` + `CynlrArmHandle` |
+| `cynlr_arm_node` | `CynlrArmNode` + `cynlr_main` executable |
+| `cynlr_arm_controllers` | `direct_cmd`, `cartesian` plugins |
+| `cynlr_arm_description` | URDF/xacro (generated at launch from config) |
+| `cynlr_moveit_config` | MoveIt SRDF + config |
+| `cynlr_bringup` | Launch file + config YAMLs |
+| `flexiv_description` | Flexiv mesh/kinematics (humble branch submodule) |
+
+---
+
+## Phase 17: Integration Tests ⏳ IN PROGRESS
+
+### Hardware verified (single-arm, 2026-04-29) ✅
+
 ```bash
-ros2 launch cynlr_bringup cynlr_system.launch.py vendor:=sim
+ros2 launch cynlr_bringup cynlr_system.launch.py \
+  config_file:=$(ros2 pkg prefix cynlr_bringup)/share/cynlr_bringup/config/cynlr_single_arm_config.yaml \
+  use_rviz:=false use_moveit:=false
 ```
-→ all three state broadcasters publish, joint_state_broadcaster publishes, RViz shows robot
 
-### JTC test
-Activate `arm_left_jt_controller`, send `JointTrajectory` goal → robot moves, state broadcaster shows new positions.
+Result: `joint_state_broadcaster` + `arm_left_jt_controller` activate, Flexiv Rizon4s enters
+`RT_JOINT_POSITION`, `direct_cmd` and `cartesian` load inactive. ✅
 
-### Hatch #1 test
+### Known open issue: WSL2 multi-arm jitter
+
+With three arms (left=real, center+right=sim), `arm_center`/`arm_right` JT controllers
+may time out during activation. Root cause: Flexiv's `stream_command` blocks the 500 Hz
+`cm_update_thread` long enough for the JTC goal tolerance timer to expire. Not present on
+a real-time OS.
+
+### Remaining test steps
+
+1. **SimArm smoke test (3-arm)**
+
 ```bash
-ros2 control switch_controllers --deactivate arm_left_jt_controller --activate arm_left_direct_cmd
-ros2 topic pub /arm_left_joint_cmd_direct cynlr_arm_interfaces/msg/JointCommand ...
+# Edit cynlr_system_config.yaml: set all three arms to vendor: sim
+ros2 launch cynlr_bringup cynlr_system.launch.py use_rviz:=false use_moveit:=false
+ros2 control list_controllers   # expect 10 controllers: 4 active, 6 inactive
+ros2 topic hz /joint_states     # ~500 Hz
+ros2 topic echo /arm_left_arm_state --once
 ```
-→ arm holds position.
 
-### Hatch #2 test
-Activate `arm_left_nrt` → send MoveL action goal → arm moves via SimArm NRT planner.
+2. **Escape hatch #1 — direct joint command**
 
-### MoveIt test
-Launch with `use_moveit:=true` → use RViz motion planning panel → trajectory flows through JTC.
+```bash
+ros2 control switch_controllers \
+  --deactivate arm_left_jt_controller --activate arm_left_direct_cmd --strict
+ros2 topic pub /arm_left_joint_cmd_direct \
+  cynlr_arm_interfaces/msg/JointCommand \
+  "{mode: 0, joint_position: [0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 0.0]}" --once
+```
 
-### Real hardware
-Replace `vendor:=sim` with `vendor:=flexiv` + supply serial numbers → same test sequence.
+3. **Escape hatch #2 — Cartesian**
+
+```bash
+ros2 control switch_controllers \
+  --deactivate arm_left_jt_controller --activate arm_left_cartesian --strict
+ros2 topic pub /arm_left_cartesian_cmd \
+  cynlr_arm_interfaces/msg/CartesianCommand \
+  "{cartesian_pose: [0.4, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0], wrench: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}" --once
+```
+
+4. **NRT actions (CynlrArmNode)**
+
+```bash
+ros2 action send_goal /arm_left_move_j cynlr_arm_interfaces/action/MoveJ \
+  "{target_positions: [0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], max_joint_vel: 0.5}"
+```
+
+5. **MoveIt test**
+
+```bash
+ros2 launch cynlr_bringup cynlr_system.launch.py use_moveit:=true use_rviz:=true
+# Use RViz MotionPlanning panel → plan → execute
+```
+
+6. **Real hardware — three arms**
+
+Requires resolving the WSL2 multi-arm jitter issue (non-RT jitter from `stream_command`).
+On a real-time Linux host this should work without changes.
 
 ---
 
 ## Build Instructions
 
-### cynlr_arm_core (Conan, WSL2)
+See `BUILD.md` for the full step-by-step guide. Summary:
+
+### flexiv_rdk (submodule, one-time)
 ```bash
-cd /path/to/cynlr_arm_core
-conan create . --profile=linux-gcc -s build_type=Release --build=missing
-conan install --requires=cynlr_arm_core/0.1.0 --profile=linux-gcc -s build_type=Release \
-    -g CMakeDeps --output-folder=/opt/cynlr_cmake
+git submodule update --init --recursive
+cmake -S flexiv_rdk -B flexiv_rdk/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=$HOME/cynlr_software/rdk_install
+cmake --build flexiv_rdk/build -j$(nproc) && cmake --install flexiv_rdk/build
+```
+
+### cynlr_arm_core (CMake, one-time)
+```bash
+cmake -S cynlr_arm_core -B cynlr_arm_core/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$HOME/cynlr_software/rdk_install" \
+  -DCMAKE_INSTALL_PREFIX=$HOME/cynlr_software/cynlr_install
+cmake --build cynlr_arm_core/build -j$(nproc) && cmake --install cynlr_arm_core/build
 ```
 
 ### ROS2 packages (colcon, WSL2)
 ```bash
 source /opt/ros/jazzy/setup.bash
 colcon build \
-    --packages-select \
-        cynlr_arm_interfaces \
-        cynlr_arm_service \
-        cynlr_hardware \
-        cynlr_arm_description \
-        cynlr_arm_controllers \
-        cynlr_bringup \
-    --cmake-args \
-        -DCMAKE_PREFIX_PATH=/opt/cynlr_cmake \
-        -DCMAKE_BUILD_TYPE=Release
+  --packages-select \
+    flexiv_description cynlr_arm_interfaces cynlr_robot cynlr_arm_node \
+    cynlr_arm_controllers cynlr_arm_description cynlr_moveit_config cynlr_bringup \
+  --cmake-args \
+    -DCMAKE_PREFIX_PATH="$HOME/cynlr_software/cynlr_install;/opt/ros/jazzy"
+source install/setup.bash
 ```
-
-**Note:** `cynlr_arm_description` requires `flexiv_description` to be in the workspace or on `CMAKE_PREFIX_PATH`. Clone it from https://github.com/flexivrobotics/flexiv_description (branch humble).
 
 ---
 
@@ -386,13 +361,15 @@ colcon build \
 
 | Purpose | File |
 |---|---|
-| Hardware interface pattern | `/flexiv_ros2/flexiv_hardware/src/flexiv_hardware_interface.cpp` |
-| Bit-cast pointer trick | `/flexiv_ros2/flexiv_controllers/flexiv_robot_states_broadcaster/include/flexiv_robot_states_broadcaster/flexiv_robot_states.hpp` |
-| ArmInterface contract | `/Cpp_App_Test/cynlr_arm_core/include/cynlr_arm_core/arm_interface.hpp` |
-| ArmState/types | `/Cpp_App_Test/cynlr_arm_core/include/cynlr_arm_core/types.hpp` |
-| RPATH/SHARED build pattern | `/Cpp_App_Test/cynlr_arm_service/CMakeLists.txt` |
-| Launch sequencing pattern | `/flexiv_ros2/flexiv_bringup/launch/rizon_dual.launch.py` |
-| Realtime publisher pattern | `/flexiv_ros2/flexiv_controllers/flexiv_robot_states_broadcaster/src/flexiv_robot_states_broadcaster.cpp` |
+| Hardware plugin | `Cpp_App_Test/cynlr_robot/src/cynlr_robot_interface.cpp` |
+| Arm handle / registry | `Cpp_App_Test/cynlr_robot/include/cynlr_robot/cynlr_arm_handle.hpp` |
+| Main executable (3-thread pattern) | `Cpp_App_Test/cynlr_arm_node/src/cynlr_main.cpp` |
+| Arm node (publishers, services, actions) | `Cpp_App_Test/cynlr_arm_node/src/cynlr_arm_node.cpp` |
+| ArmInterface contract | `Cpp_App_Test/cynlr_arm_core/include/cynlr_arm_core/arm_interface.hpp` |
+| ArmState/types | `Cpp_App_Test/cynlr_arm_core/include/cynlr_arm_core/types.hpp` |
+| System config (3-arm) | `Cpp_App_Test/cynlr_bringup/config/cynlr_system_config.yaml` |
+| System config (1-arm) | `Cpp_App_Test/cynlr_bringup/config/cynlr_single_arm_config.yaml` |
+| Hardware interface pattern (reference) | `flexiv_ros2/flexiv_hardware/src/flexiv_hardware_interface.cpp` |
 
 ---
 
@@ -405,129 +382,22 @@ colcon build \
 - **Platform: Windows MSVC (primary); Linux before hardware deployment**
 - 19/19 tests pass on Windows MSVC
 
-### Integration — arm_service (Phase 8, PENDING)
-- Full lifecycle via ROS2 service/action clients with SimArm backend
-- Framework: launch_testing + Google Test
-- **Platform: WSL2 (Ubuntu 24.04 + ROS2 Jazzy)**
+### Integration — arm_service (Phase 8)
+
+No longer applicable. `cynlr_arm_service` was deleted. NRT services and actions are hosted
+by `CynlrArmNode` inside `cynlr_arm_node`; no separate integration test package exists yet.
 
 ### Integration — ros2_control (Phase 17, IN PROGRESS)
 
-**Context:** Six new packages are unbuilt. Three of five `test_arm_service.cpp` tests are broken
-because cynlr_arm_service was slimmed (MoveJ action, set_mode service, RT cmd subscriptions removed).
+See Phase 17 test steps above.
 
-#### Step 1 — Fix broken integration tests
+**Single-arm hardware verified ✅** (2026-04-29, Flexiv Rizon4s):
+- JSB + JT controller activate, arm enters `RT_JOINT_POSITION`
+- `direct_cmd` and `cartesian` load inactive
 
-**File:** `cynlr_arm_service/tests/integration/test_arm_service.cpp`
-
-Tests to remove (use removed functionality):
-- `ConnectEnableNRTMoveJ` — calls `set_mode` srv + `move_j` action
-- `RTModeJointCommandUpdatesState` — calls `set_mode` srv + publishes to `/cmd/joint`
-- `MoveJCancellation` — calls `set_mode` srv + `move_j` action
-- `InvalidTransitionsRejected` — partially broken (calls `set_mode`)
-
-Tests to keep: `ClearFaultRequiresFaultMode` ✓
-
-New tests for supervision-only role:
-1. **`InvalidTransitionsRejected`** (rewrite): enable before connect → false; stop before connect → false; clear_fault before fault → false
-2. **`ConnectAndDisconnect`**: `/connect` (vendor=sim) → success; `/disconnect` → success; enable after disconnect → false
-3. **`ConnectEnableAndStop`**: connect+enable → success; `/stop` → success; status topic shows CONNECTED
-4. **`SetToolRequiresEnabled`**: `/set_tool` before enable → false; then connect+enable, `/set_tool` → success
-5. **`StatusTopicPublishes`**: connect+enable; spin 2s; verify `OperationalStatus` message received with mode=ENABLED
-
-Remove includes: `set_mode.hpp`, `action/move_j.hpp`, `msg/joint_command.hpp`, `<rclcpp_action/rclcpp_action.hpp>`
-Add includes: `srv/set_tool.hpp`, `msg/operational_status.hpp`
-
-#### Step 2 — Build prerequisites
-
-```bash
-sudo apt install -y ros-jazzy-ros2-control ros-jazzy-ros2-controllers
-# Clone flexiv_description into workspace
-git clone https://github.com/flexivrobotics/flexiv_description.git \
-  --branch humble Cpp_App_Test/flexiv_description
-# Verify /opt/cynlr_cmake exists (cynlr_arm_core Conan install)
-ls /opt/cynlr_cmake/lib/cmake/cynlr_arm_core/
-```
-
-#### Step 3 — Build
-
-```bash
-source /opt/ros/jazzy/setup.bash
-colcon build \
-  --packages-select cynlr_arm_interfaces cynlr_arm_service cynlr_hardware \
-    cynlr_arm_description cynlr_arm_controllers cynlr_moveit_config cynlr_camera cynlr_bringup \
-  --cmake-args -DCMAKE_PREFIX_PATH="/opt/cynlr_cmake;/opt/ros/jazzy" \
-  --symlink-install
-source install/setup.bash
-```
-
-#### Step 4 — Run updated integration tests
-
-```bash
-colcon test --packages-select cynlr_arm_service --event-handlers console_direct+
-colcon test-result --all --verbose
-```
-Expected: 5/5 PASS.
-
-#### Step 5 — System smoke test (vendor:=sim)
-
-```bash
-ros2 launch cynlr_bringup cynlr_system.launch.py \
-  vendor:=sim sn_left:=sim0 sn_center:=sim1 sn_right:=sim2 \
-  use_rviz:=false use_moveit:=false
-```
-
-Verify:
-```bash
-ros2 control list_controllers            # 16 controllers, 7 active, 9 inactive
-ros2 topic echo /arm_left_state --once   # ArmState from CynlrStateBroadcaster
-ros2 topic hz /joint_states              # ~1000Hz
-ros2 topic echo /camera_0/left/image_raw --once  # StereoCameraNode synthetic frame
-```
-
-#### Step 6 — Supervision service tests
-
-```bash
-ros2 service call /arm_left/connect cynlr_arm_interfaces/srv/Connect \
-  "{vendor: 'sim', num_joints: 7}"
-ros2 service call /arm_left/enable cynlr_arm_interfaces/srv/Trigger {}
-ros2 topic echo /arm_left/operational_status --once
-ros2 service call /arm_left/set_tool cynlr_arm_interfaces/srv/SetTool \
-  "{tool_id: 0, mass: 0.5, com: [0.0, 0.0, 0.1]}"
-ros2 service call /arm_left/zero_ft cynlr_arm_interfaces/srv/Trigger {}
-ros2 service call /arm_left/get_digital_inputs \
-  cynlr_arm_interfaces/srv/GetDigitalInputs {}
-```
-
-#### Step 7 — Escape hatch switching
-
-**Hatch #1 (direct joint command):**
-```bash
-ros2 control switch_controllers \
-  --deactivate arm_left_jt_controller --activate arm_left_direct_cmd --strict
-ros2 topic pub /arm_left/joint_cmd_direct \
-  cynlr_arm_interfaces/msg/JointCommand \
-  "{mode: 0, joint_position: [0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 0.0]}" --once
-```
-
-**Hatch #2 (NRT passthrough — arm's own planner):**
-```bash
-ros2 control switch_controllers \
-  --deactivate arm_left_jt_controller --activate arm_left_nrt --strict
-ros2 action send_goal /arm_left/move_j cynlr_arm_interfaces/action/MoveJ \
-  "{target_positions: [0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], max_joint_vel: 0.5}"
-```
-
-**Hatch #3 (Cartesian):**
-```bash
-ros2 control switch_controllers \
-  --deactivate arm_left_jt_controller --activate arm_left_cartesian --strict
-ros2 topic pub /arm_left/cartesian_cmd \
-  cynlr_arm_interfaces/msg/CartesianCommand \
-  "{pose: [0.4, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0], wrench: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}" --once
-```
+**Remaining:** SimArm 3-arm smoke, escape hatch switching, NRT actions, MoveIt, multi-arm hardware (blocked by WSL2 jitter)
 
 ### System (manual, hardware)
-- Real Flexiv arm (Ethernet)
-- `ros2 launch cynlr_bringup cynlr_system.launch.py vendor:=flexiv sn_left:=<SN> ...`
-- FlexivArm connect → enable → move via JTC → switch to hatch → move via NRT
-- RT streaming at 1kHz; `CARTESIAN_MOTION_FORCE` and `JOINT_TORQUE` Linux-only
+- `ros2 launch cynlr_bringup cynlr_system.launch.py config_file:=<path> use_rviz:=true`
+- Edit `cynlr_system_config.yaml` to set `vendor: flexiv` and real serial numbers
+- `CARTESIAN_MOTION_FORCE` and `JOINT_TORQUE` streaming: Linux only

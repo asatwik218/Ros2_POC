@@ -95,6 +95,8 @@ private:
     // Pending transitions set by prepare, applied by perform
     ActiveMode pending_start_{ActiveMode::NONE};
     bool       pending_stop_{false};
+    // Tracks NRT active flag edge so cmd_pos_ can be reseeded on NRT→RT transition
+    bool       prev_nrt_active_{false};
 
     std::string prefix_; // e.g. "arm_left_"
 

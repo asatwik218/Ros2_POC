@@ -12,7 +12,8 @@
 // Container executable: ControllerManager + one CynlrArmNode per arm.
 // All share the same process so they share the CynlrArmRegistry singleton.
 //
-// Usage: cynlr_main <prefix1> <prefix2> ... [--ros-args ...]
+// Arm prefixes are read from the 'arm_prefixes' ROS parameter on controller_manager,
+// set by the launch file via the generated controller YAML.
 //
 // Architecture mirrors ros2_control_node (Jazzy):
 //   cm_executor (main thread)  — handles all ROS callbacks (services, topics)
@@ -25,14 +26,6 @@
 
 int main(int argc, char** argv)
 {
-    // Collect positional args (arm prefixes) before ROS2 consumes argv
-    std::vector<std::string> prefixes;
-    for (int i = 1; i < argc; ++i) {
-        std::string arg(argv[i]);
-        if (arg == "--ros-args") break;
-        prefixes.push_back(arg);
-    }
-
     rclcpp::init(argc, argv);
 
     // CM executor handles ROS callbacks; the update loop runs in its own thread
@@ -40,6 +33,15 @@ int main(int argc, char** argv)
     auto cm = std::make_shared<controller_manager::ControllerManager>(
         cm_executor, "controller_manager");
     cm_executor->add_node(cm);
+
+    // Read arm prefixes from the controller_manager parameter (set by launch file).
+    // Using a ROS parameter avoids fragile positional-arg parsing across launch backends.
+    if (!cm->has_parameter("arm_prefixes")) {
+        cm->declare_parameter("arm_prefixes", std::vector<std::string>{});
+    }
+    const auto prefixes = cm->get_parameter("arm_prefixes").as_string_array();
+    RCLCPP_INFO(cm->get_logger(), "cynlr_main: arm_prefixes = [%s]",
+        [&]{ std::string s; for (auto& p : prefixes) s += p + " "; return s; }().c_str());
 
     // Dedicated RT-style update thread — equivalent to ros2_control_node's cm_thread
     std::thread cm_update_thread([cm]() {
@@ -65,10 +67,22 @@ int main(int argc, char** argv)
         }
     });
 
-    // Arm nodes spin in their own executor — isolated from CM to avoid callback interference
+    // Arm nodes spin in their own executor — isolated from CM to avoid callback interference.
+    // Keep shared_ptrs in arm_nodes so the executor's weak_ptr references stay valid.
     auto arm_executor = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
+    std::vector<std::shared_ptr<cynlr_arm_node::CynlrArmNode>> arm_nodes;
     for (const auto& prefix : prefixes) {
-        arm_executor->add_node(std::make_shared<cynlr_arm_node::CynlrArmNode>(prefix));
+        try {
+            auto node = std::make_shared<cynlr_arm_node::CynlrArmNode>(prefix);
+            arm_nodes.push_back(node);
+            arm_executor->add_node(node);
+            RCLCPP_INFO(cm->get_logger(), "cynlr_main: created arm node [%s]",
+                node->get_name());
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(cm->get_logger(),
+                "cynlr_main: failed to create CynlrArmNode for [%s]: %s",
+                prefix.c_str(), e.what());
+        }
     }
     std::thread arm_thread([&arm_executor]() { arm_executor->spin(); });
 
