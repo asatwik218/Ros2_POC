@@ -469,6 +469,14 @@ hardware_interface::return_type CynlrRobotInterface::write(
     using cynlr::arm::StreamCommand;
     using cynlr::arm::StreamMode;
 
+    // When NRT motion just finished and RT mode restored, reseed cmd_pos_ from current
+    // actual position so controllers don't command the arm back to the pre-NRT setpoint.
+    if (prev_nrt_active_ && !arm_->nrt_active()) {
+        for (int i = 0; i < kDOF; ++i)
+            cmd_pos_[i] = hw_pos_[i];
+    }
+    prev_nrt_active_ = arm_->nrt_active();
+
     switch (active_mode_) {
 
     case ActiveMode::POSITION: {

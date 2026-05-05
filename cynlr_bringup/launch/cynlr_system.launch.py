@@ -90,10 +90,13 @@ def generate_controller_yaml(config: dict, params_file_path: str) -> str:
     """
     update_rate = config["system"]["update_rate"]
 
+    arm_prefixes = [f"{a['name']}_" for a in config["arms"]]
+
     cm: dict = {
         "controller_manager": {
             "ros__parameters": {
                 "update_rate": update_rate,
+                "arm_prefixes": arm_prefixes,
                 "joint_state_broadcaster": {
                     "type": "joint_state_broadcaster/JointStateBroadcaster"
                 },
@@ -213,12 +216,10 @@ def generate_launch_description():
 
         # ── cynlr_main: ControllerManager + one CynlrArmNode per arm ────────
         # All run in the same process so they share the CynlrArmRegistry singleton.
-        arm_prefixes = [f"{a['name']}_" for a in config["arms"]]
-
+        # arm_prefixes are passed via the 'arm_prefixes' parameter in the controller YAML.
         cynlr_main_node = Node(
             package="cynlr_arm_node",
             executable="cynlr_main",
-            arguments=arm_prefixes,
             parameters=[robot_description, ParameterFile(ctrl_tmp_path, allow_substs=True)],
             output="both",
         )

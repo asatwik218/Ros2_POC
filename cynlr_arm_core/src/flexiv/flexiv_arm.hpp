@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <memory>
 #include "cynlr_arm_core/arm_interface.hpp"
 #include "cynlr_arm_core/capabilities/digital_io_controllable.hpp"
@@ -34,6 +35,7 @@ public:
     Expected<void> move_j(const JointTarget& target, const MotionParams& params) override;
     Expected<void> move_ptp(const CartesianTarget& target, const MotionParams& params) override;
     Expected<bool> is_motion_complete() override;
+    bool nrt_active() const override { return nrt_active_.load(); }
     Expected<void> start_streaming(StreamMode mode) override;
     Expected<void> stream_command(const StreamCommand& cmd) override;
     Expected<void> stop_streaming() override;
@@ -63,6 +65,8 @@ private:
     std::unique_ptr<flexiv::rdk::Robot> robot_;
     ArmConfig config_;
     StreamMode stream_mode_{StreamMode::JOINT_POSITION};
+    // Set true while an NRT motion is executing so stream_command skips RT streaming
+    std::atomic<bool> nrt_active_{false};
 };
 
 } // namespace cynlr::arm
