@@ -13,6 +13,8 @@
 #include "cynlr_arm_interfaces/msg/arm_state.hpp"
 #include "cynlr_arm_interfaces/srv/trigger.hpp"
 #include "cynlr_arm_interfaces/srv/set_tool.hpp"
+#include "cynlr_arm_interfaces/srv/get_tool.hpp"
+#include "cynlr_arm_interfaces/srv/is_motion_running.hpp"
 #include "cynlr_arm_interfaces/action/move_l.hpp"
 #include "cynlr_arm_interfaces/action/move_j.hpp"
 #include "cynlr_arm_interfaces/action/move_ptp.hpp"
@@ -33,10 +35,12 @@ public:
     explicit CynlrArmNode(const std::string& prefix);
 
 private:
-    using TriggerSrv  = cynlr_arm_interfaces::srv::Trigger;
-    using SetToolSrv  = cynlr_arm_interfaces::srv::SetTool;
-    using MoveLAction = cynlr_arm_interfaces::action::MoveL;
-    using MoveJAction = cynlr_arm_interfaces::action::MoveJ;
+    using TriggerSrv         = cynlr_arm_interfaces::srv::Trigger;
+    using SetToolSrv         = cynlr_arm_interfaces::srv::SetTool;
+    using GetToolSrv         = cynlr_arm_interfaces::srv::GetTool;
+    using IsMotionRunningSrv = cynlr_arm_interfaces::srv::IsMotionRunning;
+    using MoveLAction   = cynlr_arm_interfaces::action::MoveL;
+    using MoveJAction   = cynlr_arm_interfaces::action::MoveJ;
     using MovePTPAction = cynlr_arm_interfaces::action::MovePTP;
 
     std::string prefix_;
@@ -54,9 +58,16 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::WrenchStamped>::SharedPtr   pub_ext_wrench_world_;
 
     // Services
-    rclcpp::Service<TriggerSrv>::SharedPtr  srv_clear_fault_;
-    rclcpp::Service<SetToolSrv>::SharedPtr  srv_set_tool_;
-    rclcpp::Service<TriggerSrv>::SharedPtr  srv_zero_ft_sensor_;
+    rclcpp::Service<TriggerSrv>::SharedPtr         srv_connect_;
+    rclcpp::Service<TriggerSrv>::SharedPtr         srv_disconnect_;
+    rclcpp::Service<TriggerSrv>::SharedPtr         srv_enable_;
+    rclcpp::Service<TriggerSrv>::SharedPtr         srv_stop_;
+    rclcpp::Service<TriggerSrv>::SharedPtr         srv_clear_fault_;
+    rclcpp::Service<TriggerSrv>::SharedPtr         srv_zero_ft_sensor_;
+    rclcpp::Service<SetToolSrv>::SharedPtr         srv_set_tool_;
+    rclcpp::Service<SetToolSrv>::SharedPtr         srv_update_tool_;
+    rclcpp::Service<GetToolSrv>::SharedPtr         srv_get_tool_;
+    rclcpp::Service<IsMotionRunningSrv>::SharedPtr srv_is_motion_running_;
 
     // Action servers
     rclcpp_action::Server<MoveLAction>::SharedPtr   act_move_l_;
@@ -68,15 +79,30 @@ private:
     void try_setup();
     void publish_state();
 
+    // Generic trigger handler: calls a handle function, fills success/message
+    void handle_trigger(
+        const std::function<cynlr::arm::Expected<void>()>& fn,
+        const char* name,
+        std::shared_ptr<TriggerSrv::Response> res);
+
     void handle_clear_fault(
+        std::shared_ptr<TriggerSrv::Request>,
+        std::shared_ptr<TriggerSrv::Response>);
+    void handle_zero_ft_sensor(
         std::shared_ptr<TriggerSrv::Request>,
         std::shared_ptr<TriggerSrv::Response>);
     void handle_set_tool(
         std::shared_ptr<SetToolSrv::Request>,
         std::shared_ptr<SetToolSrv::Response>);
-    void handle_zero_ft_sensor(
-        std::shared_ptr<TriggerSrv::Request>,
-        std::shared_ptr<TriggerSrv::Response>);
+    void handle_update_tool(
+        std::shared_ptr<SetToolSrv::Request>,
+        std::shared_ptr<SetToolSrv::Response>);
+    void handle_get_tool(
+        std::shared_ptr<GetToolSrv::Request>,
+        std::shared_ptr<GetToolSrv::Response>);
+    void handle_is_motion_running(
+        std::shared_ptr<IsMotionRunningSrv::Request>,
+        std::shared_ptr<IsMotionRunningSrv::Response>);
 
     // MoveL
     rclcpp_action::GoalResponse   move_l_goal(const rclcpp_action::GoalUUID&, std::shared_ptr<const MoveLAction::Goal>);

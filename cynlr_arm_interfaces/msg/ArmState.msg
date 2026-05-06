@@ -19,3 +19,4 @@ float64[6] ext_wrench_in_world   # estimated external wrench in world frame
 bool fault
 bool operational
 bool estopped
+bool motion_running    # true while an NRT move_l/j/ptp action is executing

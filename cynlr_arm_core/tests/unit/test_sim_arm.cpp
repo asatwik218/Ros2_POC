@@ -180,3 +180,169 @@ TEST(SimArm, DisconnectPreventsGetState) {
     EXPECT_FALSE(state.has_value());
     EXPECT_EQ(state.error().code, ErrorCode::NOT_CONNECTED);
 }
+
+// ---------------------------------------------------------------------------
+// Async NRT contract
+// ---------------------------------------------------------------------------
+
+TEST(SimArm, MoveJIsNonBlocking) {
+    auto arm = create_arm(sim_config());
+    (void)arm->connect(sim_config());
+    (void)arm->enable();
+
+    JointTarget target;
+    target.positions[0] = 1.0;
+
+    auto t0 = std::chrono::steady_clock::now();
+    auto result = arm->move_j(target, MotionParams{});
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0);
+
+    ASSERT_TRUE(result.has_value());
+    // SimArm move_delay is 50ms; a non-blocking call should return in < 10ms
+    EXPECT_LT(elapsed.count(), 30);
+    // nrt_active must be true immediately after the call
+    EXPECT_TRUE(arm->nrt_active());
+}
+
+TEST(SimArm, NrtActiveTogglesAroundMoveJ) {
+    auto arm = create_arm(sim_config());
+    (void)arm->connect(sim_config());
+    (void)arm->enable();
+
+    EXPECT_FALSE(arm->nrt_active());
+
+    JointTarget target;
+    (void)arm->move_j(target, MotionParams{});
+    EXPECT_TRUE(arm->nrt_active());
+
+    // Poll until complete
+    for (int i = 0; i < 100; ++i) {
+        auto done = arm->is_motion_complete();
+        ASSERT_TRUE(done.has_value());
+        if (*done) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    EXPECT_FALSE(arm->nrt_active());
+}
+
+TEST(SimArm, IsMotionCompleteReturnsFalseBeforeDelay) {
+    auto arm = create_arm(sim_config());
+    (void)arm->connect(sim_config());
+    (void)arm->enable();
+
+    JointTarget target;
+    (void)arm->move_j(target, MotionParams{});
+
+    // Immediately after issuing: should not be complete yet
+    auto done = arm->is_motion_complete();
+    ASSERT_TRUE(done.has_value());
+    EXPECT_FALSE(*done);
+}
+
+TEST(SimArm, StopAbortsMoveJ) {
+    auto arm = create_arm(sim_config());
+    (void)arm->connect(sim_config());
+    (void)arm->enable();
+
+    JointTarget target;
+    target.positions[3] = 1.5;
+    (void)arm->move_j(target, MotionParams{});
+    EXPECT_TRUE(arm->nrt_active());
+
+    // Abort before the 50ms delay expires
+    (void)arm->stop();
+
+    EXPECT_FALSE(arm->nrt_active());
+    auto done = arm->is_motion_complete();
+    ASSERT_TRUE(done.has_value());
+    EXPECT_TRUE(*done);  // stopped = complete
+}
+
+// ---------------------------------------------------------------------------
+// Tool get / set / update
+// ---------------------------------------------------------------------------
+
+TEST(SimArm, ToolRoundtrip) {
+    auto arm = create_arm(sim_config());
+    (void)arm->connect(sim_config());
+    (void)arm->enable();
+
+    ToolInfo t1;
+    t1.mass_kg = 0.5;
+    t1.com = {0.0, 0.0, 0.05};
+    t1.tcp_pose[3] = 1.0;  // identity quat
+
+    ASSERT_TRUE(arm->set_tool(t1).has_value());
+    auto got = arm->get_tool();
+    ASSERT_TRUE(got.has_value());
+    EXPECT_NEAR(got->mass_kg, 0.5, 1e-9);
+    EXPECT_NEAR(got->com[2], 0.05, 1e-9);
+}
+
+TEST(SimArm, UpdateToolOverwritesPrev) {
+    auto arm = create_arm(sim_config());
+    (void)arm->connect(sim_config());
+    (void)arm->enable();
+
+    ToolInfo t1; t1.mass_kg = 0.5;
+    ToolInfo t2; t2.mass_kg = 1.2;
+
+    (void)arm->set_tool(t1);
+    (void)arm->update_tool(t2);
+
+    auto got = arm->get_tool();
+    ASSERT_TRUE(got.has_value());
+    EXPECT_NEAR(got->mass_kg, 1.2, 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// Hybrid motion-force (sim stub: pose moves, wrench ignored)
+// ---------------------------------------------------------------------------
+
+TEST(SimArm, MoveHybridMotionForceIsNonBlocking) {
+    auto arm = create_arm(sim_config());
+    (void)arm->connect(sim_config());
+    (void)arm->enable();
+
+    auto* fc = dynamic_cast<cynlr::arm::ForceControllable*>(arm.get());
+    ASSERT_NE(fc, nullptr);
+
+    CartesianTarget pose;
+    pose.pose[0] = 0.4; pose.pose[3] = 1.0;
+    std::array<double, 6> wrench = {0, 0, -5.0, 0, 0, 0};
+
+    auto t0 = std::chrono::steady_clock::now();
+    auto result = fc->move_hybrid_motion_force(pose, wrench, MotionParams{});
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_LT(elapsed.count(), 30);
+    EXPECT_TRUE(arm->nrt_active());
+
+    // Poll to completion
+    for (int i = 0; i < 100; ++i) {
+        auto done = arm->is_motion_complete();
+        if (done.has_value() && *done) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    EXPECT_FALSE(arm->nrt_active());
+    auto state = arm->get_state();
+    ASSERT_TRUE(state.has_value());
+    EXPECT_NEAR(state->tcp_pose[0], 0.4, 1e-6);
+}
+
+// ---------------------------------------------------------------------------
+// intended_rt_mode via set_intended_rt_mode
+// ---------------------------------------------------------------------------
+
+TEST(SimArm, IntendedRtModeRecordedWithoutModeSwitch) {
+    auto arm = create_arm(sim_config());
+    (void)arm->connect(sim_config());
+    (void)arm->enable();
+    // Just record the mode — SimArm has no real mode switching
+    arm->set_intended_rt_mode(StreamMode::CARTESIAN_MOTION_FORCE);
+    // If we get here without crash the setter at least accepted the call
+    SUCCEED();
+}

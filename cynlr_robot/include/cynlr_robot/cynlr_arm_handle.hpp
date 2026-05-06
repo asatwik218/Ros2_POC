@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <functional>
 #include <optional>
 
@@ -15,12 +16,21 @@ struct CynlrArmHandle {
     // State snapshot — calls through to the SDK (thread-safe)
     std::function<std::optional<cynlr::arm::ArmState>()> get_state;
 
-    // Arm lifecycle services
-    std::function<cynlr::arm::Expected<void>()>                              clear_fault;
-    std::function<cynlr::arm::Expected<void>(const cynlr::arm::ToolInfo&)>   set_tool;
-    std::function<cynlr::arm::Expected<void>()>                              zero_ft_sensor;
+    // --- Lifecycle ---
+    std::function<cynlr::arm::Expected<void>()> connect;
+    std::function<cynlr::arm::Expected<void>()> disconnect;
+    std::function<cynlr::arm::Expected<void>()> enable;
+    std::function<cynlr::arm::Expected<void>()> clear_fault;
+    std::function<cynlr::arm::Expected<void>()> zero_ft_sensor;
+    // stop_motion: aborts any in-flight NRT move (does not disconnect the arm).
+    std::function<cynlr::arm::Expected<void>()> stop_motion;
 
-    // NRT motion — blocking, call from a non-RT thread only
+    // --- Tool management ---
+    std::function<cynlr::arm::Expected<void>(const cynlr::arm::ToolInfo&)> set_tool;
+    std::function<cynlr::arm::Expected<void>(const cynlr::arm::ToolInfo&)> update_tool;
+    std::function<cynlr::arm::Expected<cynlr::arm::ToolInfo>()>            get_tool;
+
+    // --- NRT motion (NON-BLOCKING — returns immediately; poll is_motion_complete) ---
     std::function<cynlr::arm::Expected<void>(
         const cynlr::arm::CartesianTarget&,
         const cynlr::arm::MotionParams&)>  move_l;
@@ -33,8 +43,14 @@ struct CynlrArmHandle {
         const cynlr::arm::CartesianTarget&,
         const cynlr::arm::MotionParams&)>  move_ptp;
 
-    std::function<std::optional<bool>()>                  is_motion_complete;
-    std::function<cynlr::arm::Expected<void>()>           stop;
+    // Hybrid motion-force (ForceControllable required; null if unsupported)
+    std::function<cynlr::arm::Expected<void>(
+        const cynlr::arm::CartesianTarget&,
+        const std::array<double, 6>&,
+        const cynlr::arm::MotionParams&)>  move_hybrid_motion_force;
+
+    std::function<std::optional<bool>()>   is_motion_complete;
+    std::function<bool()>                  is_nrt_active;
 };
 
 } // namespace cynlr_robot

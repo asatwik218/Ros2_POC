@@ -1,5 +1,7 @@
 #pragma once
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include "cynlr_arm_core/arm_interface.hpp"
 #include "cynlr_arm_core/capabilities/digital_io_controllable.hpp"
@@ -39,7 +41,10 @@ public:
     Expected<void> start_streaming(StreamMode mode) override;
     Expected<void> stream_command(const StreamCommand& cmd) override;
     Expected<void> stop_streaming() override;
+    void set_intended_rt_mode(StreamMode mode) override { intended_rt_mode_ = mode; }
     Expected<void> set_tool(const ToolInfo& tool) override;
+    Expected<void> update_tool(const ToolInfo& tool) override { return set_tool(tool); }
+    Expected<ToolInfo> get_tool() const override;
     Expected<void> zero_ft_sensor() override;
     std::vector<std::string> supported_features() const override;
 
@@ -47,6 +52,10 @@ public:
     Expected<void> set_force_control_axis(const ForceAxisConfig& config) override;
     Expected<void> set_force_control_frame(const CartesianPose& frame) override;
     Expected<void> set_passive_force_control(bool enable) override;
+    Expected<void> move_hybrid_motion_force(
+        const CartesianTarget& pose_target,
+        const std::array<double, 6>& wrench_setpoint,
+        const MotionParams& params) override;
 
     // ImpedanceConfigurable
     Expected<void> set_cartesian_impedance(const ImpedanceParams& params) override;
@@ -64,9 +73,21 @@ public:
 private:
     std::unique_ptr<flexiv::rdk::Robot> robot_;
     ArmConfig config_;
-    StreamMode stream_mode_{StreamMode::JOINT_POSITION};
+    // RT mode the HW interface wants restored after any NRT move completes.
+    // Updated by set_intended_rt_mode() from CynlrRobotInterface::perform_command_mode_switch.
+    StreamMode intended_rt_mode_{StreamMode::JOINT_POSITION};
     // Set true while an NRT motion is executing so stream_command skips RT streaming
     std::atomic<bool> nrt_active_{false};
+    // Timestamp of the most recent NRT Send call — used for the start-up grace period in
+    // is_motion_complete() so we don't declare completion before the arm begins moving.
+    std::chrono::steady_clock::time_point nrt_send_time_{};
+    static constexpr std::chrono::milliseconds kNrtStartDelay{200};
+    // Cached tool for get_tool()
+    ToolInfo cached_tool_{};
+    static constexpr const char* kManagedToolName = "CynlrTool";
+
+    // Switch back to intended_rt_mode_ after NRT motion finishes (used inside is_motion_complete).
+    void restore_rt_mode_locked();
 };
 
 } // namespace cynlr::arm

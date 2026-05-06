@@ -13,6 +13,7 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include "cynlr_arm_core/arm_factory.hpp"
+#include "cynlr_arm_core/capabilities/force_controllable.hpp"
 #include "cynlr_arm_core/error.hpp"
 #include "cynlr_robot/cynlr_arm_registry.hpp"
 
@@ -25,7 +26,7 @@ namespace cynlr_robot {
 namespace {
 
 // Same bit_cast as flexiv_robot_states.hpp — reinterprets memory without UB.
-// Required because StateInterface only stores double*, but we need to pass pointers.
+
 template<class To, class From>
 std::enable_if_t<sizeof(To) == sizeof(From)
                      && std::is_trivially_copyable_v<From>
@@ -204,9 +205,15 @@ hardware_interface::CallbackReturn CynlrRobotInterface::on_activate(
         if (!r) return std::nullopt;
         return *r;
     };
-    arm_handle_->clear_fault     = [this]() { return arm_->clear_fault(); };
-    arm_handle_->set_tool        = [this](const cynlr::arm::ToolInfo& t) { return arm_->set_tool(t); };
-    arm_handle_->zero_ft_sensor  = [this]() { return arm_->zero_ft_sensor(); };
+    arm_handle_->connect        = [this]() { return arm_->connect(arm_config_); };
+    arm_handle_->disconnect     = [this]() { return arm_->disconnect(); };
+    arm_handle_->enable         = [this]() { return arm_->enable(); };
+    arm_handle_->clear_fault    = [this]() { return arm_->clear_fault(); };
+    arm_handle_->zero_ft_sensor = [this]() { return arm_->zero_ft_sensor(); };
+    arm_handle_->stop_motion    = [this]() { return arm_->stop(); };
+    arm_handle_->set_tool       = [this](const cynlr::arm::ToolInfo& t) { return arm_->set_tool(t); };
+    arm_handle_->update_tool    = [this](const cynlr::arm::ToolInfo& t) { return arm_->update_tool(t); };
+    arm_handle_->get_tool       = [this]() { return arm_->get_tool(); };
     arm_handle_->move_l   = [this](const cynlr::arm::CartesianTarget& tgt, const cynlr::arm::MotionParams& p) {
         return arm_->move_l(tgt, p);
     };
@@ -216,12 +223,21 @@ hardware_interface::CallbackReturn CynlrRobotInterface::on_activate(
     arm_handle_->move_ptp = [this](const cynlr::arm::CartesianTarget& tgt, const cynlr::arm::MotionParams& p) {
         return arm_->move_ptp(tgt, p);
     };
+    // Wire hybrid motion-force only if the arm supports it
+    if (auto* fc = dynamic_cast<cynlr::arm::ForceControllable*>(arm_.get())) {
+        arm_handle_->move_hybrid_motion_force = [fc](
+            const cynlr::arm::CartesianTarget& tgt,
+            const std::array<double, 6>& wrench,
+            const cynlr::arm::MotionParams& p) {
+            return fc->move_hybrid_motion_force(tgt, wrench, p);
+        };
+    }
     arm_handle_->is_motion_complete = [this]() -> std::optional<bool> {
         auto r = arm_->is_motion_complete();
         if (!r) return std::nullopt;
         return *r;
     };
-    arm_handle_->stop = [this]() { return arm_->stop(); };
+    arm_handle_->is_nrt_active = [this]() { return arm_->nrt_active(); };
 
     CynlrArmRegistry::instance().register_arm(prefix_, arm_handle_);
 
@@ -331,6 +347,14 @@ hardware_interface::return_type CynlrRobotInterface::prepare_command_mode_switch
     pending_start_ = ActiveMode::NONE;
     pending_stop_  = false;
 
+    // Reject the switch if an NRT motion is in progress — the user must call /stop first.
+    if (arm_ && arm_->nrt_active()) {
+        RCLCPP_ERROR(getLogger(),
+            "[%s] Controller switch rejected: NRT motion in progress. "
+            "Call /%sstop first.", prefix_.c_str(), prefix_.c_str());
+        return hardware_interface::return_type::ERROR;
+    }
+
     // Count how many of our joints appear in stop_interfaces
     int stop_count = 0;
     for (const auto& key : stop_interfaces) {
@@ -406,23 +430,31 @@ hardware_interface::return_type CynlrRobotInterface::perform_command_mode_switch
     }
 
     if (pending_start_ == ActiveMode::POSITION) {
-        cmd_pos_.fill(std::numeric_limits<double>::quiet_NaN()); // clear stale commands
-        arm_->start_streaming(cynlr::arm::StreamMode::JOINT_POSITION);
+        cmd_pos_.fill(std::numeric_limits<double>::quiet_NaN());
+        intended_rt_mode_ = cynlr::arm::StreamMode::JOINT_POSITION;
+        arm_->set_intended_rt_mode(intended_rt_mode_);
+        arm_->start_streaming(intended_rt_mode_);
         active_mode_ = ActiveMode::POSITION;
 
     } else if (pending_start_ == ActiveMode::VELOCITY) {
         cmd_vel_.fill(std::numeric_limits<double>::quiet_NaN());
-        arm_->start_streaming(cynlr::arm::StreamMode::JOINT_POSITION); // velocity via pos+vel
+        intended_rt_mode_ = cynlr::arm::StreamMode::JOINT_POSITION; // velocity via pos+vel
+        arm_->set_intended_rt_mode(intended_rt_mode_);
+        arm_->start_streaming(intended_rt_mode_);
         active_mode_ = ActiveMode::VELOCITY;
 
     } else if (pending_start_ == ActiveMode::EFFORT) {
         cmd_eff_.fill(std::numeric_limits<double>::quiet_NaN());
-        arm_->start_streaming(cynlr::arm::StreamMode::JOINT_TORQUE);
+        intended_rt_mode_ = cynlr::arm::StreamMode::JOINT_TORQUE;
+        arm_->set_intended_rt_mode(intended_rt_mode_);
+        arm_->start_streaming(intended_rt_mode_);
         active_mode_ = ActiveMode::EFFORT;
 
     } else if (pending_start_ == ActiveMode::CARTESIAN) {
         cmd_cart_.fill(std::numeric_limits<double>::quiet_NaN());
-        arm_->start_streaming(cynlr::arm::StreamMode::CARTESIAN_MOTION_FORCE);
+        intended_rt_mode_ = cynlr::arm::StreamMode::CARTESIAN_MOTION_FORCE;
+        arm_->set_intended_rt_mode(intended_rt_mode_);
+        arm_->start_streaming(intended_rt_mode_);
         active_mode_ = ActiveMode::CARTESIAN;
     }
 
@@ -469,13 +501,28 @@ hardware_interface::return_type CynlrRobotInterface::write(
     using cynlr::arm::StreamCommand;
     using cynlr::arm::StreamMode;
 
-    // When NRT motion just finished and RT mode restored, reseed cmd_pos_ from current
-    // actual position so controllers don't command the arm back to the pre-NRT setpoint.
-    if (prev_nrt_active_ && !arm_->nrt_active()) {
-        for (int i = 0; i < kDOF; ++i)
-            cmd_pos_[i] = hw_pos_[i];
+    // When NRT motion just finished and RT mode is restored, reseed command buffers from
+    // current actual state so controllers don't command the arm back to the pre-NRT setpoint.
+    const bool cur_nrt = arm_->nrt_active();
+    if (prev_nrt_active_ && !cur_nrt) {
+        switch (active_mode_) {
+        case ActiveMode::POSITION:
+        case ActiveMode::VELOCITY:
+            for (int i = 0; i < kDOF; ++i) cmd_pos_[i] = hw_pos_[i];
+            break;
+        case ActiveMode::EFFORT:
+            cmd_eff_.fill(0.0);
+            break;
+        case ActiveMode::CARTESIAN:
+            // Reseed cartesian pose from current TCP; zero wrench to avoid force transients
+            for (int i = 0; i < 7; ++i) cmd_cart_[i]     = arm_state_.tcp_pose[i];
+            for (int i = 0; i < 6; ++i) cmd_cart_[7 + i] = 0.0;
+            break;
+        default:
+            break;
+        }
     }
-    prev_nrt_active_ = arm_->nrt_active();
+    prev_nrt_active_ = cur_nrt;
 
     switch (active_mode_) {
 
