@@ -46,7 +46,7 @@ controller_interface::CallbackReturn CynlrCartesianController::on_deactivate(
 {
     // NaN-fill command interfaces so the hardware plugin stops sending
     for (auto& ci : command_interfaces_)
-        ci.set_value(std::numeric_limits<double>::quiet_NaN());
+        (void)ci.set_value(std::numeric_limits<double>::quiet_NaN());
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -76,9 +76,9 @@ controller_interface::return_type CynlrCartesianController::update(
 
     // command_interfaces_ layout: [pose_0..pose_6, wrench_0..wrench_5]
     for (int i = 0; i < 7; ++i)
-        command_interfaces_[i].set_value(cmd->cartesian_pose[i]);
+        (void)command_interfaces_[i].set_value(cmd->cartesian_pose[i]);
     for (int i = 0; i < 6; ++i)
-        command_interfaces_[7 + i].set_value(cmd->wrench[i]);
+        (void)command_interfaces_[7 + i].set_value(cmd->wrench[i]);
 
     return controller_interface::return_type::OK;
 }
