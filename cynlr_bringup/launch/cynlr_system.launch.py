@@ -231,11 +231,16 @@ def generate_launch_description():
             parameters=[robot_description, robot_description_semantic],
         )
 
+        rviz_config = os.path.join(
+            get_package_share_directory("cynlr_arm_description"),
+            "rviz", "cynlr_system.rviz"
+        )
         rviz_node = Node(
             package="rviz2",
             executable="rviz2",
             name="rviz2",
             output="log",
+            arguments=["-d", rviz_config],
             condition=IfCondition(use_rviz),
         )
 
