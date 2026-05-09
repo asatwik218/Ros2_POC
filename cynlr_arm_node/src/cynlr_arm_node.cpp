@@ -1,6 +1,7 @@
 #include "cynlr_arm_node/cynlr_arm_node.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <thread>
 
 #include "cynlr_robot/cynlr_arm_registry.hpp"
@@ -21,10 +22,20 @@ cynlr::arm::MotionParams motion_params(double vel_lin, double vel_joint,
     return p;
 }
 
+cynlr::arm::ToolInfo tool_from_request(const cynlr_arm_interfaces::srv::SetTool::Request& req)
+{
+    cynlr::arm::ToolInfo tool{};
+    tool.mass_kg = req.mass_kg;
+    std::copy(req.com.begin(),      req.com.end(),      tool.com.begin());
+    std::copy(req.inertia.begin(),  req.inertia.end(),  tool.inertia.begin());
+    std::copy(req.tcp_pose.begin(), req.tcp_pose.end(), tool.tcp_pose.begin());
+    return tool;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
-// Construction — start polling for the handle
+// Construction
 // ---------------------------------------------------------------------------
 
 CynlrArmNode::CynlrArmNode(const std::string& prefix)
@@ -37,7 +48,7 @@ CynlrArmNode::CynlrArmNode(const std::string& prefix)
 }
 
 // ---------------------------------------------------------------------------
-// try_setup — called every 100ms until the hardware plugin registers the handle
+// try_setup
 // ---------------------------------------------------------------------------
 
 void CynlrArmNode::try_setup()
@@ -59,21 +70,58 @@ void CynlrArmNode::try_setup()
     pub_ext_wrench_world_ = create_publisher<geometry_msgs::msg::WrenchStamped>(
         prefix_ + "ext_wrench_world", rclcpp::SystemDefaultsQoS());
 
-    // Services
+    // Lifecycle services
+    srv_connect_ = create_service<TriggerSrv>(
+        prefix_ + "connect",
+        [this](std::shared_ptr<TriggerSrv::Request>, std::shared_ptr<TriggerSrv::Response> res) {
+            handle_trigger(handle_->connect, "connect", res); });
+
+    srv_disconnect_ = create_service<TriggerSrv>(
+        prefix_ + "disconnect",
+        [this](std::shared_ptr<TriggerSrv::Request>, std::shared_ptr<TriggerSrv::Response> res) {
+            handle_trigger(handle_->disconnect, "disconnect", res); });
+
+    srv_enable_ = create_service<TriggerSrv>(
+        prefix_ + "enable",
+        [this](std::shared_ptr<TriggerSrv::Request>, std::shared_ptr<TriggerSrv::Response> res) {
+            handle_trigger(handle_->enable, "enable", res); });
+
+    srv_stop_ = create_service<TriggerSrv>(
+        prefix_ + "stop",
+        [this](std::shared_ptr<TriggerSrv::Request>, std::shared_ptr<TriggerSrv::Response> res) {
+            handle_trigger(handle_->stop_motion, "stop", res); });
+
     srv_clear_fault_ = create_service<TriggerSrv>(
         prefix_ + "clear_fault",
         [this](std::shared_ptr<TriggerSrv::Request> req,
                std::shared_ptr<TriggerSrv::Response> res) { handle_clear_fault(req, res); });
 
+    srv_zero_ft_sensor_ = create_service<TriggerSrv>(
+        prefix_ + "zero_ft_sensor",
+        [this](std::shared_ptr<TriggerSrv::Request> req,
+               std::shared_ptr<TriggerSrv::Response> res) { handle_zero_ft_sensor(req, res); });
+
+    // Tool services
     srv_set_tool_ = create_service<SetToolSrv>(
         prefix_ + "set_tool",
         [this](std::shared_ptr<SetToolSrv::Request> req,
                std::shared_ptr<SetToolSrv::Response> res) { handle_set_tool(req, res); });
 
-    srv_zero_ft_sensor_ = create_service<TriggerSrv>(
-        prefix_ + "zero_ft_sensor",
-        [this](std::shared_ptr<TriggerSrv::Request> req,
-               std::shared_ptr<TriggerSrv::Response> res) { handle_zero_ft_sensor(req, res); });
+    srv_update_tool_ = create_service<SetToolSrv>(
+        prefix_ + "update_tool",
+        [this](std::shared_ptr<SetToolSrv::Request> req,
+               std::shared_ptr<SetToolSrv::Response> res) { handle_update_tool(req, res); });
+
+    srv_get_tool_ = create_service<GetToolSrv>(
+        prefix_ + "get_tool",
+        [this](std::shared_ptr<GetToolSrv::Request> req,
+               std::shared_ptr<GetToolSrv::Response> res) { handle_get_tool(req, res); });
+
+    srv_is_motion_running_ = create_service<IsMotionRunningSrv>(
+        prefix_ + "is_motion_running",
+        [this](std::shared_ptr<IsMotionRunningSrv::Request> req,
+               std::shared_ptr<IsMotionRunningSrv::Response> res) {
+            handle_is_motion_running(req, res); });
 
     // Action servers
     act_move_l_ = rclcpp_action::create_server<MoveLAction>(
@@ -161,48 +209,88 @@ void CynlrArmNode::publish_state()
             msg.ext_wrench_in_tcp[i]   = s.ext_wrench_in_tcp[i];
             msg.ext_wrench_in_world[i] = s.ext_wrench_in_world[i];
         }
-        msg.fault       = s.fault;
-        msg.operational = s.operational;
-        msg.estopped    = s.estopped;
+        msg.fault          = s.fault;
+        msg.operational    = s.operational;
+        msg.estopped       = s.estopped;
+        msg.motion_running = motion_running_.load();
         pub_arm_state_->publish(msg);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Service handlers
+// Service helpers
 // ---------------------------------------------------------------------------
+
+void CynlrArmNode::handle_trigger(
+    const std::function<cynlr::arm::Expected<void>()>& fn,
+    const char* name,
+    std::shared_ptr<TriggerSrv::Response> res)
+{
+    if (!fn) {
+        res->success = false;
+        res->message = std::string(name) + ": not supported by this arm";
+        return;
+    }
+    auto r = fn();
+    res->success = static_cast<bool>(r);
+    res->message = r ? std::string(name) + " OK" : r.error().message;
+}
 
 void CynlrArmNode::handle_clear_fault(
     std::shared_ptr<TriggerSrv::Request>,
     std::shared_ptr<TriggerSrv::Response> res)
 {
-    auto r = handle_->clear_fault();
-    res->success = static_cast<bool>(r);
-    res->message = r ? "Fault cleared" : r.error().message;
-}
-
-void CynlrArmNode::handle_set_tool(
-    std::shared_ptr<SetToolSrv::Request> req,
-    std::shared_ptr<SetToolSrv::Response> res)
-{
-    cynlr::arm::ToolInfo tool{};
-    tool.mass_kg = req->mass_kg;
-    std::copy(req->com.begin(),      req->com.end(),      tool.com.begin());
-    std::copy(req->inertia.begin(),  req->inertia.end(),  tool.inertia.begin());
-    std::copy(req->tcp_pose.begin(), req->tcp_pose.end(), tool.tcp_pose.begin());
-
-    auto r = handle_->set_tool(tool);
-    res->success = static_cast<bool>(r);
-    res->message = r ? "Tool set" : r.error().message;
+    handle_trigger(handle_->clear_fault, "clear_fault", res);
 }
 
 void CynlrArmNode::handle_zero_ft_sensor(
     std::shared_ptr<TriggerSrv::Request>,
     std::shared_ptr<TriggerSrv::Response> res)
 {
-    auto r = handle_->zero_ft_sensor();
+    handle_trigger(handle_->zero_ft_sensor, "zero_ft_sensor", res);
+}
+
+void CynlrArmNode::handle_set_tool(
+    std::shared_ptr<SetToolSrv::Request> req,
+    std::shared_ptr<SetToolSrv::Response> res)
+{
+    auto r = handle_->set_tool(tool_from_request(*req));
     res->success = static_cast<bool>(r);
-    res->message = r ? "FT sensor zeroed" : r.error().message;
+    res->message = r ? "Tool set" : r.error().message;
+}
+
+void CynlrArmNode::handle_update_tool(
+    std::shared_ptr<SetToolSrv::Request> req,
+    std::shared_ptr<SetToolSrv::Response> res)
+{
+    auto r = handle_->update_tool(tool_from_request(*req));
+    res->success = static_cast<bool>(r);
+    res->message = r ? "Tool updated" : r.error().message;
+}
+
+void CynlrArmNode::handle_get_tool(
+    std::shared_ptr<GetToolSrv::Request>,
+    std::shared_ptr<GetToolSrv::Response> res)
+{
+    auto r = handle_->get_tool();
+    if (!r) {
+        res->success = false;
+        res->message = r.error().message;
+        return;
+    }
+    res->success  = true;
+    res->message  = "OK";
+    res->mass_kg  = r->mass_kg;
+    std::copy(r->com.begin(),      r->com.end(),      res->com.begin());
+    std::copy(r->inertia.begin(),  r->inertia.end(),  res->inertia.begin());
+    std::copy(r->tcp_pose.begin(), r->tcp_pose.end(), res->tcp_pose.begin());
+}
+
+void CynlrArmNode::handle_is_motion_running(
+    std::shared_ptr<IsMotionRunningSrv::Request>,
+    std::shared_ptr<IsMotionRunningSrv::Response> res)
+{
+    res->running = motion_running_.load();
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +310,7 @@ rclcpp_action::GoalResponse CynlrArmNode::move_l_goal(
 rclcpp_action::CancelResponse CynlrArmNode::move_l_cancel(
     std::shared_ptr<rclcpp_action::ServerGoalHandle<MoveLAction>>)
 {
-    handle_->stop();
+    handle_->stop_motion();
     return rclcpp_action::CancelResponse::ACCEPT;
 }
 
@@ -242,6 +330,7 @@ void CynlrArmNode::execute_move_l(
     for (int i = 0; i < 7; ++i) target.pose[i] = goal.target_pose[i];
     auto params = motion_params(goal.max_linear_vel, 0.0, goal.max_linear_acc, 0.0);
 
+    // Non-blocking — returns immediately after issuing the command
     auto cmd = handle_->move_l(target, params);
     if (!cmd) {
         auto result = std::make_shared<MoveLAction::Result>();
@@ -255,6 +344,7 @@ void CynlrArmNode::execute_move_l(
     auto feedback = std::make_shared<MoveLAction::Feedback>();
     while (rclcpp::ok()) {
         if (handle->is_canceling()) {
+            handle_->stop_motion();
             auto result = std::make_shared<MoveLAction::Result>();
             result->success = false; result->message = "Cancelled";
             handle->canceled(result);
@@ -296,7 +386,7 @@ rclcpp_action::GoalResponse CynlrArmNode::move_j_goal(
 rclcpp_action::CancelResponse CynlrArmNode::move_j_cancel(
     std::shared_ptr<rclcpp_action::ServerGoalHandle<MoveJAction>>)
 {
-    handle_->stop();
+    handle_->stop_motion();
     return rclcpp_action::CancelResponse::ACCEPT;
 }
 
@@ -316,6 +406,7 @@ void CynlrArmNode::execute_move_j(
     for (int i = 0; i < 7; ++i) target.positions[i] = goal.target_positions[i];
     auto params = motion_params(0.0, goal.max_joint_vel, 0.0, goal.max_joint_acc);
 
+    // Non-blocking
     auto cmd = handle_->move_j(target, params);
     if (!cmd) {
         auto result = std::make_shared<MoveJAction::Result>();
@@ -328,6 +419,7 @@ void CynlrArmNode::execute_move_j(
     auto feedback = std::make_shared<MoveJAction::Feedback>();
     while (rclcpp::ok()) {
         if (handle->is_canceling()) {
+            handle_->stop_motion();
             auto result = std::make_shared<MoveJAction::Result>();
             result->success = false; result->message = "Cancelled";
             handle->canceled(result);
@@ -368,7 +460,7 @@ rclcpp_action::GoalResponse CynlrArmNode::move_ptp_goal(
 rclcpp_action::CancelResponse CynlrArmNode::move_ptp_cancel(
     std::shared_ptr<rclcpp_action::ServerGoalHandle<MovePTPAction>>)
 {
-    handle_->stop();
+    handle_->stop_motion();
     return rclcpp_action::CancelResponse::ACCEPT;
 }
 
@@ -388,6 +480,7 @@ void CynlrArmNode::execute_move_ptp(
     for (int i = 0; i < 7; ++i) target.pose[i] = goal.target_pose[i];
     auto params = motion_params(0.0, goal.max_joint_vel, 0.0, goal.max_joint_acc);
 
+    // Non-blocking
     auto cmd = handle_->move_ptp(target, params);
     if (!cmd) {
         auto result = std::make_shared<MovePTPAction::Result>();
@@ -400,6 +493,7 @@ void CynlrArmNode::execute_move_ptp(
     auto feedback = std::make_shared<MovePTPAction::Feedback>();
     while (rclcpp::ok()) {
         if (handle->is_canceling()) {
+            handle_->stop_motion();
             auto result = std::make_shared<MovePTPAction::Result>();
             result->success = false; result->message = "Cancelled";
             handle->canceled(result);

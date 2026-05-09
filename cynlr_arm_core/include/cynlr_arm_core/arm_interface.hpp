@@ -31,22 +31,30 @@ public:
     virtual Expected<void> clear_fault() = 0;
     virtual Expected<void> run_auto_recovery() = 0;
 
-    // --- Discrete motion (NRT, blocking — completes before returning) ---
+    // --- Discrete motion (NRT, NON-BLOCKING — returns immediately after issuing the command).
+    //     Poll is_motion_complete() at ~50 Hz to detect completion.
+    //     Call stop() to abort a motion in flight. ---
     virtual Expected<void> move_l(const CartesianTarget& target, const MotionParams& params) = 0;
     virtual Expected<void> move_j(const JointTarget& target, const MotionParams& params) = 0;
     virtual Expected<void> move_ptp(const CartesianTarget& target, const MotionParams& params) = 0;
-    // Returns true when current primitive/motion is complete
+    // Returns true when the current NRT motion has finished (arm has reached the goal or stopped).
     virtual Expected<bool> is_motion_complete() = 0;
-    // Returns true while an NRT motion is in progress (RT streaming is paused)
+    // Returns true while an NRT motion is in progress (RT streaming is paused).
     virtual bool nrt_active() const { return false; }
 
     // --- RT streaming (1kHz) ---
     virtual Expected<void> start_streaming(StreamMode mode) = 0;
     virtual Expected<void> stream_command(const StreamCommand& cmd) = 0;
     virtual Expected<void> stop_streaming() = 0;
+    // Informs the implementation which RT mode to restore after an NRT move completes.
+    // Called by CynlrRobotInterface::perform_command_mode_switch before start_streaming.
+    virtual void set_intended_rt_mode(StreamMode mode) { (void)mode; }
 
     // --- Tool ---
+    // set_tool / update_tool are equivalent; both store and apply the tool definition.
     virtual Expected<void> set_tool(const ToolInfo& tool) = 0;
+    virtual Expected<void> update_tool(const ToolInfo& tool) { return set_tool(tool); }
+    virtual Expected<ToolInfo> get_tool() const = 0;
     virtual Expected<void> zero_ft_sensor() = 0;
 
     // --- Capability introspection ---

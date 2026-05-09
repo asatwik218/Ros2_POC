@@ -1,15 +1,15 @@
 # Build & Test Guide
 
-## Status (as of 2026-05-05)
+## Status (as of 2026-05-06)
 
 | Package | Built | Notes |
 |---|---|---|
-| flexiv_rdk | ✅ colcon (wraps `rdk_install`) | one-time SDK install first |
-| cynlr_arm_core | ✅ colcon | requires cmake overrides (spdlog/fastcdr/fastrtps) |
+| flexiv_rdk | ✅ cmake | pre-built static lib; `RDK_SUPPORT_ROS2_JAZZY=ON` required |
+| cynlr_arm_core | ✅ cmake | pure C++; installed to `cynlr_install/` |
+| cynlr_arm_interfaces | ✅ colcon | includes GetTool.srv, IsMotionRunning.srv |
 | cynlr_robot | ✅ colcon | hardware plugin + CynlrArmRegistry |
 | cynlr_arm_node | ✅ colcon | cynlr_main executable + CynlrArmNode lib |
 | cynlr_arm_controllers | ✅ colcon | 2 plugins: direct_cmd, cartesian |
-| cynlr_arm_interfaces | ✅ colcon | — |
 | cynlr_arm_description | ✅ colcon | xacro parses cleanly |
 | flexiv_description | ✅ colcon | — |
 | cynlr_moveit_config | ✅ colcon | — |
@@ -43,73 +43,59 @@ sudo apt install -y \
 
 ## Step 1 — Build flexiv_rdk SDK (one-time, installs to `rdk_install/`)
 
-The Flexiv RDK v1.8 C++ library lives at `~/cynlr_software/flexiv_rdk/`.
-Build and install it once:
+The Flexiv RDK v1.8 submodule lives at `flexiv_rdk/` inside this workspace.
+`-DRDK_SUPPORT_ROS2_JAZZY=ON` is **required** — it downloads the `.a` variant that was
+compiled against fastcdr 2.2.7 (matching ROS2 Jazzy). Without it the link fails with
+undefined `serializeArray` symbols.
 
 ```bash
-cmake -S ~/cynlr_software/flexiv_rdk \
-      -B ~/cynlr_software/flexiv_rdk/build \
+cd ~/cynlr_software/Cpp_App_Test
+git submodule update --init --recursive
+
+cmake -S flexiv_rdk -B flexiv_rdk/build \
       -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=$HOME/cynlr_software/rdk_install
-cmake --build ~/cynlr_software/flexiv_rdk/build --config Release -j$(nproc)
-cmake --install ~/cynlr_software/flexiv_rdk/build
+      -DCMAKE_INSTALL_PREFIX=$HOME/cynlr_software/rdk_install \
+      -DRDK_SUPPORT_ROS2_JAZZY=ON
+cmake --build flexiv_rdk/build -j$(nproc)
+cmake --install flexiv_rdk/build
 ```
 
-The install lands in `~/cynlr_software/rdk_install/`. It bundles:
-- `libflexiv_rdk.a` — the RDK static library
-- `libspdlog.a` (v1.14.1) — bundled, different version from system spdlog 1.12
-- `libfastcdr.a`, `libfastrtps.a` — bundled FastDDS (different from ROS2's FastDDS)
-
-> **Important**: `cynlr_arm_core` must be built with these bundled libraries (see Step 3)
-> because `libflexiv_rdk.a` was compiled against them, not the system versions.
+The install lands in `~/cynlr_software/rdk_install/`.
 
 ---
 
-## Step 2 — Build `flexiv_rdk` colcon wrapper (once per clean workspace)
+## Step 2 — Build `cynlr_arm_core` (standalone cmake, installs to `cynlr_install/`)
 
-The `flexiv_rdk/` directory in this workspace is a thin colcon package that copies
-the pre-built library from `rdk_install/` into the colcon install tree.
+`cynlr_arm_core` is a pure CMake package — not a colcon package. Build and install it
+before running colcon. The colcon build picks it up via `CMAKE_PREFIX_PATH`.
+
+```bash
+cd ~/cynlr_software/Cpp_App_Test
+
+cmake -S cynlr_arm_core -B cynlr_arm_core/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_PREFIX_PATH="$HOME/cynlr_software/rdk_install" \
+      -DCMAKE_INSTALL_PREFIX=$HOME/cynlr_software/cynlr_install
+cmake --build cynlr_arm_core/build -j$(nproc)
+cmake --install cynlr_arm_core/build
+
+# Install into the colcon workspace install tree as well (so downstream packages find it)
+cmake --install cynlr_arm_core/build \
+      --prefix ~/cynlr_software/Cpp_App_Test/install/cynlr_arm_core
+```
+
+Run unit tests (no ROS required):
+```bash
+ctest --test-dir cynlr_arm_core/build --output-on-failure
+```
+
+---
+
+## Step 3 — Build all colcon packages
 
 ```bash
 cd ~/cynlr_software/Cpp_App_Test
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-select flexiv_rdk --cmake-args -DCMAKE_BUILD_TYPE=Release
-```
-
-This installs `install/flexiv_rdk/lib/libflexiv_rdk.a` and its cmake config files.
-If `install/flexiv_rdk/` is missing (e.g. after a clean), this step must be re-run
-before building `cynlr_arm_core`.
-
----
-
-## Step 3 — Build `cynlr_arm_core` (requires cmake overrides)
-
-`cynlr_arm_core` links against `libflexiv_rdk.a`, which was compiled with `rdk_install`'s
-bundled spdlog (1.14.1), fastcdr, and fastrtps. These must be explicitly pointed to so
-the linker resolves symbols correctly — the system spdlog (1.12.0) has an incompatible ABI.
-
-```bash
-cd ~/cynlr_software/Cpp_App_Test
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
-
-colcon build --packages-select cynlr_arm_core \
-  --cmake-args \
-    -DCMAKE_BUILD_TYPE=Release \
-    -Dspdlog_DIR=$HOME/cynlr_software/rdk_install/lib/cmake/spdlog \
-    -Dfastcdr_DIR=$HOME/cynlr_software/rdk_install/lib/cmake/fastcdr \
-    -Dfastrtps_DIR=$HOME/cynlr_software/rdk_install/share/fastrtps/cmake
-```
-
-These overrides are cached in `build/cynlr_arm_core/CMakeCache.txt` after the first run,
-so incremental rebuilds (`colcon build --packages-select cynlr_arm_core`) don't need them.
-
----
-
-## Step 4 — Build remaining colcon packages
-
-```bash
-cd ~/cynlr_software/Cpp_App_Test
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
 
 colcon build \
   --packages-select \
@@ -118,44 +104,55 @@ colcon build \
     cynlr_arm_node \
     cynlr_arm_controllers \
     cynlr_arm_description \
-    cynlr_moveit_config \
     flexiv_description \
+    cynlr_moveit_config \
     cynlr_bringup \
-  --cmake-args -DCMAKE_BUILD_TYPE=Release
+  --cmake-args \
+    -DCMAKE_PREFIX_PATH="$HOME/cynlr_software/cynlr_install;/opt/ros/jazzy"
 
 source install/setup.bash
 ```
 
 ---
 
-## Full clean rebuild (all packages in order)
+## Full clean rebuild (from zero)
 
-Use this sequence after a full `rm -rf build/ install/`:
+Use this after wiping `build/`, `install/`, `rdk_install/`, and `cynlr_install/`.
 
 ```bash
 cd ~/cynlr_software/Cpp_App_Test
+rm -rf build install log cynlr_arm_core/build
+rm -rf $HOME/cynlr_software/rdk_install $HOME/cynlr_software/cynlr_install
+git submodule update --init --recursive
+
+# 1. flexiv_rdk (downloads ROS2-Jazzy-compatible .a from GitHub releases)
+cmake -S flexiv_rdk -B flexiv_rdk/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=$HOME/cynlr_software/rdk_install \
+      -DRDK_SUPPORT_ROS2_JAZZY=ON
+cmake --build flexiv_rdk/build -j$(nproc)
+cmake --install flexiv_rdk/build
+
+# 2. cynlr_arm_core (pure cmake — must install before colcon)
+cmake -S cynlr_arm_core -B cynlr_arm_core/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_PREFIX_PATH="$HOME/cynlr_software/rdk_install" \
+      -DCMAKE_INSTALL_PREFIX=$HOME/cynlr_software/cynlr_install
+cmake --build cynlr_arm_core/build -j$(nproc)
+cmake --install cynlr_arm_core/build
+cmake --install cynlr_arm_core/build \
+      --prefix ~/cynlr_software/Cpp_App_Test/install/cynlr_arm_core
+ctest --test-dir cynlr_arm_core/build --output-on-failure
+
+# 3. All ROS packages
 source /opt/ros/jazzy/setup.bash
-
-# 1. flexiv_rdk colcon wrapper
-colcon build --packages-select flexiv_rdk --cmake-args -DCMAKE_BUILD_TYPE=Release
-source install/setup.bash
-
-# 2. cynlr_arm_core with bundled library overrides
-colcon build --packages-select cynlr_arm_core \
-  --cmake-args \
-    -DCMAKE_BUILD_TYPE=Release \
-    -Dspdlog_DIR=$HOME/cynlr_software/rdk_install/lib/cmake/spdlog \
-    -Dfastcdr_DIR=$HOME/cynlr_software/rdk_install/lib/cmake/fastcdr \
-    -Dfastrtps_DIR=$HOME/cynlr_software/rdk_install/share/fastrtps/cmake
-source install/setup.bash
-
-# 3. All remaining packages
 colcon build \
   --packages-select \
     cynlr_arm_interfaces cynlr_robot cynlr_arm_node \
     cynlr_arm_controllers cynlr_arm_description \
-    cynlr_moveit_config flexiv_description cynlr_bringup \
-  --cmake-args -DCMAKE_BUILD_TYPE=Release
+    flexiv_description cynlr_moveit_config cynlr_bringup \
+  --cmake-args \
+    -DCMAKE_PREFIX_PATH="$HOME/cynlr_software/cynlr_install;/opt/ros/jazzy"
 
 source install/setup.bash
 ```
@@ -183,64 +180,97 @@ ros2 control list_controllers
 #   arm_left_direct_cmd        [inactive]
 #   arm_left_cartesian         [inactive]
 
-ros2 topic hz /joint_states       # confirms state broadcaster is publishing
-ros2 topic echo /arm_left_arm_state --once  # full arm state (pose, torques, fault flag)
+ros2 topic hz /joint_states
+ros2 topic echo /arm_left_arm_state --once   # includes motion_running field
 ```
 
 ---
 
-## NRT motion actions (move_j, move_l, move_ptp)
+## ROS API reference (prefix = `arm_left_` for left arm)
 
-The `CynlrArmNode` hosts three action servers per arm for NRT (non-real-time) motions.
-These work while the JTC is active — the implementation pauses RT streaming, switches
-the robot to NRT mode, executes the motion, then restores RT mode.
+### Topics published at 100 Hz
+
+| Topic | Type |
+|---|---|
+| `arm_left_arm_state` | `cynlr_arm_interfaces/msg/ArmState` |
+| `arm_left_tcp_pose` | `geometry_msgs/msg/PoseStamped` |
+| `arm_left_ft_raw` | `geometry_msgs/msg/WrenchStamped` |
+| `arm_left_ext_wrench_tcp` | `geometry_msgs/msg/WrenchStamped` |
+| `arm_left_ext_wrench_world` | `geometry_msgs/msg/WrenchStamped` |
+
+`ArmState` includes a `motion_running` bool (true while a `move_j/l/ptp` action is executing).
+
+### Lifecycle services
 
 ```bash
-# Move to a joint-space pose (slow, safe velocities)
-ros2 action send_goal /arm_left_move_j cynlr_arm_interfaces/action/MoveJ \
-  "{target_positions: [0.0, -0.65, 0.0, 1.55, 0.0, 0.65, 0.0], max_joint_vel: 0.1, max_joint_acc: 0.05}"
+ros2 service call /arm_left_connect          cynlr_arm_interfaces/srv/Trigger '{}'
+ros2 service call /arm_left_disconnect       cynlr_arm_interfaces/srv/Trigger '{}'
+ros2 service call /arm_left_enable           cynlr_arm_interfaces/srv/Trigger '{}'
+ros2 service call /arm_left_stop             cynlr_arm_interfaces/srv/Trigger '{}'  # abort NRT motion
+ros2 service call /arm_left_clear_fault      cynlr_arm_interfaces/srv/Trigger '{}'
+ros2 service call /arm_left_zero_ft_sensor   cynlr_arm_interfaces/srv/Trigger '{}'
+ros2 service call /arm_left_is_motion_running cynlr_arm_interfaces/srv/IsMotionRunning '{}'
+```
 
-# Move Cartesian (requires F/T sensor zeroing first — see below)
+### Tool services
+
+```bash
+ros2 service call /arm_left_get_tool    cynlr_arm_interfaces/srv/GetTool '{}'
+ros2 service call /arm_left_set_tool    cynlr_arm_interfaces/srv/SetTool \
+  '{mass_kg: 0.5, com: [0,0,0.05], inertia: [0,0,0,0,0,0], tcp_pose: [0,0,0.1,1,0,0,0]}'
+ros2 service call /arm_left_update_tool cynlr_arm_interfaces/srv/SetTool \
+  '{mass_kg: 0.8, com: [0,0,0.05], inertia: [0,0,0,0,0,0], tcp_pose: [0,0,0.1,1,0,0,0]}'
+```
+
+### NRT motion actions
+
+The three action servers issue discrete NRT moves. They are **non-blocking** internally —
+`CynlrArmNode` polls `is_motion_complete()` and publishes feedback until done.
+Cancel a goal with `ros2 action cancel` and the arm stops immediately.
+
+```bash
+# Joint-space move
+ros2 action send_goal /arm_left_move_j cynlr_arm_interfaces/action/MoveJ \
+  '{target_positions: [0.0,-0.65,0.0,1.55,0.0,0.65,0.0], max_joint_vel: 0.1, max_joint_acc: 0.05}' \
+  --feedback
+
+# Cartesian linear move (zero ft_sensor first)
+ros2 service call /arm_left_zero_ft_sensor cynlr_arm_interfaces/srv/Trigger '{}'
 ros2 action send_goal /arm_left_move_l cynlr_arm_interfaces/action/MoveL \
-  "{target_pose: [0.4, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0], max_linear_vel: 0.05, max_angular_vel: 0.0, max_linear_acc: 0.0}"
+  '{target_pose: [0.4,0.0,0.5,1.0,0.0,0.0,0.0], max_linear_vel: 0.05}' \
+  --feedback
+
+# PTP (point-to-point Cartesian)
+ros2 action send_goal /arm_left_move_ptp cynlr_arm_interfaces/action/MovePTP \
+  '{target_pose: [0.4,0.0,0.5,1.0,0.0,0.0,0.0], max_joint_vel: 0.1}' \
+  --feedback
 ```
 
 **Velocity guidelines** (WSL2 / non-RT host):
-- Keep `max_joint_vel` ≤ 0.15 rad/s and `max_joint_acc` ≤ 0.1 rad/s² to stay within
-  joint torque limits.
-- For Cartesian moves, `max_linear_vel` ≤ 0.05 m/s is recommended for initial testing.
+- `max_joint_vel` ≤ 0.15 rad/s, `max_joint_acc` ≤ 0.1 rad/s²
+- `max_linear_vel` ≤ 0.05 m/s for initial Cartesian testing
 
-**F/T sensor zeroing** (required before `move_l` / Cartesian force control):
-```bash
-ros2 service call /arm_left_zero_ft_sensor cynlr_arm_interfaces/srv/Trigger '{}'
-```
+### Controller switching
 
-**Fault clearing** (if the robot enters fault state):
-```bash
-ros2 service call /arm_left_clear_fault cynlr_arm_interfaces/srv/Trigger '{}'
-```
-Note: this service calls `ClearFault()` on the Flexiv SDK which can block for a few
-seconds on a MultiThreadedExecutor. If the arm_ops node becomes unresponsive, restart
-the system.
-
----
-
-## Escape hatch controller switching
+Controller switches are **rejected while an NRT motion is running**. Call
+`/arm_left_stop` (or cancel the action) first, then switch.
 
 ```bash
 # Switch from JTC to direct joint commands
-ros2 service call /controller_manager/switch_controller \
-  controller_manager_msgs/srv/SwitchController \
-  '{deactivate_controllers: ["arm_left_jt_controller"], activate_controllers: ["arm_left_direct_cmd"], strictness: 2}'
+ros2 control switch_controllers \
+  --deactivate arm_left_jt_controller \
+  --activate   arm_left_direct_cmd \
+  --strict
 
 ros2 topic pub /arm_left_joint_cmd_direct \
   cynlr_arm_interfaces/msg/JointCommand \
-  "{mode: 0, joint_position: [0.0, -0.65, 0.0, 1.55, 0.0, 0.65, 0.0]}" --once
+  '{mode: 0, joint_position: [0.0,-0.65,0.0,1.55,0.0,0.65,0.0]}' --once
 
-# Switch back to JTC
-ros2 service call /controller_manager/switch_controller \
-  controller_manager_msgs/srv/SwitchController \
-  '{deactivate_controllers: ["arm_left_direct_cmd"], activate_controllers: ["arm_left_jt_controller"], strictness: 2}'
+# Switch to Cartesian streaming
+ros2 control switch_controllers \
+  --deactivate arm_left_direct_cmd \
+  --activate   arm_left_cartesian \
+  --strict
 ```
 
 ---
@@ -248,28 +278,29 @@ ros2 service call /controller_manager/switch_controller \
 ## Architecture overview
 
 ```
-cynlr_system_config.yaml  (single source of truth: arm count, names, serials, mounts)
+cynlr_system_config.yaml  (arm count, names, serials, mounts, vendor)
          │
          ▼
 cynlr_system.launch.py
-  generates URDF string + controller YAML tempfile → spawns cynlr_main
+  generates URDF + controller YAML → spawns cynlr_main
 
 cynlr_main  (3 threads)
-  cm_executor (main)    — ROS service/topic callbacks for ControllerManager
-  cm_update_thread      — 500 Hz: cm->read(), cm->update(), cm->write()
-  arm_thread            — CynlrArmNode executor per arm (MultiThreadedExecutor)
+  cm_executor         — ROS callbacks for ControllerManager
+  cm_update_thread    — 500 Hz: read() → update() → write()
+  arm_thread          — CynlrArmNode executor per arm
 
   ControllerManager
-    CynlrRobotInterface × N   (on_activate → registers CynlrArmHandle in CynlrArmRegistry)
+    CynlrRobotInterface × N   (registers CynlrArmHandle in CynlrArmRegistry on activate)
     joint_state_broadcaster
     arm_*_jt_controller × N   (MoveIt / FollowJointTrajectory)
-    arm_*_direct_cmd × N      (escape hatch — inactive by default)
-    arm_*_cartesian × N       (escape hatch — inactive by default)
+    arm_*_direct_cmd    × N   (inactive by default)
+    arm_*_cartesian     × N   (inactive by default)
 
   CynlrArmNode × N
-    Publishers: tcp_pose, arm_state
-    Services:   clear_fault, set_tool, zero_ft_sensor
-    Actions:    move_j, move_l, move_ptp  (NRT, blocking until motion complete)
+    Publishers:  arm_state, tcp_pose, ft_raw, ext_wrench_*  @ 100 Hz
+    Services:    connect, disconnect, enable, stop, clear_fault,
+                 zero_ft_sensor, set_tool, update_tool, get_tool, is_motion_running
+    Actions:     move_j, move_l, move_ptp  (async NRT with feedback + cancel)
 ```
 
 ---
@@ -279,6 +310,7 @@ cynlr_main  (3 threads)
 | Item | Path |
 |---|---|
 | Flexiv RDK SDK install | `~/cynlr_software/rdk_install/` |
+| cynlr_arm_core install | `~/cynlr_software/cynlr_install/` |
 | System config (3-arm) | `cynlr_bringup/config/cynlr_system_config.yaml` |
 | System config (1-arm) | `cynlr_bringup/config/cynlr_single_arm_config.yaml` |
 | Hardware plugin | `cynlr_robot/src/cynlr_robot_interface.cpp` |
@@ -291,12 +323,12 @@ cynlr_main  (3 threads)
 ## Known issues / WSL2 notes
 
 - **Timeliness warnings** (`Failure counter: N/3`): expected on WSL2. The non-RT scheduler
-  causes occasional missed 1ms RT deadlines. The counter resets and doesn't cause motion
-  failures in practice.
-- **Overrun warnings** (`Total time > 2000us`): similarly expected on WSL2. Consider
-  lowering `update_rate` to 200–250 Hz in `cynlr_system_config.yaml` if overruns
-  are frequent.
-- **NRT motion + JTC conflict**: after a `move_j`/`move_l` action completes, the JTC
-  resumes and may briefly try to command the arm back to its pre-NRT hold position.
-  Keeping NRT motion slow (vel ≤ 0.15 rad/s) avoids torque limit faults from this
-  transition.
+  causes occasional missed 1ms RT deadlines. Does not cause motion failures in practice.
+- **Overrun warnings** (`Total time > 2000us`): also expected on WSL2. Lower `update_rate`
+  to 200–250 Hz in `cynlr_system_config.yaml` if overruns are frequent.
+- **NRT motion + JTC transition**: after a `move_j`/`move_l`/`move_ptp` action completes,
+  the JTC resumes at the current joint position (cmd_pos_ is reseeded from hw_pos_ on the
+  NRT→RT edge). Keep NRT motion slow (vel ≤ 0.15 rad/s) to avoid large position steps.
+- **Controller switch interlock**: `prepare_command_mode_switch` rejects switches while
+  `nrt_active() == true`. Call `/arm_left_stop` first, confirm `is_motion_running` returns
+  false, then switch.

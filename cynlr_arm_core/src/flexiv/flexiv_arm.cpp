@@ -1,5 +1,6 @@
 #include "flexiv/flexiv_arm.hpp"
 #include <flexiv/rdk/robot.hpp>
+#include <flexiv/rdk/tool.hpp>
 #include <spdlog/spdlog.h>
 #include <stdexcept>
 #include <map>
@@ -127,17 +128,30 @@ Expected<void> FlexivArm::run_auto_recovery() {
     }
 }
 
+void FlexivArm::restore_rt_mode_locked() {
+    try {
+        switch (intended_rt_mode_) {
+            case StreamMode::JOINT_POSITION:
+                robot_->SwitchMode(flexiv::rdk::Mode::RT_JOINT_POSITION);
+                break;
+            case StreamMode::JOINT_TORQUE:
+                robot_->SwitchMode(flexiv::rdk::Mode::RT_JOINT_TORQUE);
+                break;
+            case StreamMode::CARTESIAN_MOTION_FORCE:
+                robot_->SwitchMode(flexiv::rdk::Mode::RT_CARTESIAN_MOTION_FORCE);
+                break;
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("FlexivArm: restore_rt_mode failed: {}", e.what());
+    }
+}
+
 Expected<void> FlexivArm::move_l(const CartesianTarget& target, const MotionParams& params) {
     if (!robot_) return make_error(ErrorCode::NOT_CONNECTED, "FlexivArm: not connected");
     try {
-        // Stop current motion while RT streaming continues (required — stopping streaming
-        // before SwitchMode causes timeliness faults that block the mode switch).
         robot_->Stop();
         robot_->SwitchMode(flexiv::rdk::Mode::NRT_CARTESIAN_MOTION_FORCE);
-        // Mode switched: mark NRT active so write() skips stream_command (which would
-        // fail silently in NRT mode) and so cmd_pos_ gets reseeded on RT restore.
         nrt_active_ = true;
-        // API: SendCartesianMotionForce(array<double,7> pose, array<double,6> wrench, ...)
         robot_->SendCartesianMotionForce(
             target.pose,
             std::array<double, flexiv::rdk::kCartDoF>{},
@@ -145,15 +159,7 @@ Expected<void> FlexivArm::move_l(const CartesianTarget& target, const MotionPara
             params.max_linear_vel,
             params.max_angular_vel,
             params.max_linear_acc);
-        // Give the robot's motion generator time to start before polling stopped()
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        // Block until motion completes (or 30-second safety timeout)
-        for (int i = 0; i < 1500 && !robot_->stopped(); ++i)
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        // Restore previous RT streaming mode so the HW interface write() loop resumes cleanly
-        if (stream_mode_ == StreamMode::JOINT_POSITION)
-            robot_->SwitchMode(flexiv::rdk::Mode::RT_JOINT_POSITION);
-        nrt_active_ = false;
+        nrt_send_time_ = std::chrono::steady_clock::now();
         return {};
     } catch (const std::exception& e) {
         nrt_active_ = false;
@@ -165,28 +171,15 @@ Expected<void> FlexivArm::move_l(const CartesianTarget& target, const MotionPara
 Expected<void> FlexivArm::move_j(const JointTarget& target, const MotionParams& params) {
     if (!robot_) return make_error(ErrorCode::NOT_CONNECTED, "FlexivArm: not connected");
     try {
-        // Stop current motion while RT streaming continues (required — stopping streaming
-        // before SwitchMode causes timeliness faults that block the mode switch).
         robot_->Stop();
         robot_->SwitchMode(flexiv::rdk::Mode::NRT_JOINT_POSITION);
-        // Mode switched: mark NRT active so write() skips stream_command (which would
-        // fail silently in NRT mode) and so cmd_pos_ gets reseeded on RT restore.
         nrt_active_ = true;
-        // API: SendJointPosition(positions, velocities, max_vel, max_acc) — 4 args
         std::vector<double> pos(target.positions.begin(), target.positions.end());
-        std::vector<double> vel(7, 0.0);  // target velocity = 0 (let motion gen handle)
+        std::vector<double> vel(7, 0.0);
         std::vector<double> max_vel(7, params.max_joint_vel);
         std::vector<double> max_acc(7, params.max_joint_acc);
         robot_->SendJointPosition(pos, vel, max_vel, max_acc);
-        // Give the robot's motion generator time to start before polling stopped()
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        // Block until motion completes (or 30-second safety timeout)
-        for (int i = 0; i < 1500 && !robot_->stopped(); ++i)
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        // Restore previous RT streaming mode so the HW interface write() loop resumes cleanly
-        if (stream_mode_ == StreamMode::JOINT_POSITION)
-            robot_->SwitchMode(flexiv::rdk::Mode::RT_JOINT_POSITION);
-        nrt_active_ = false;
+        nrt_send_time_ = std::chrono::steady_clock::now();
         return {};
     } catch (const std::exception& e) {
         nrt_active_ = false;
@@ -201,7 +194,14 @@ Expected<void> FlexivArm::move_ptp(const CartesianTarget& target, const MotionPa
 
 Expected<bool> FlexivArm::is_motion_complete() {
     if (!robot_) return make_error(ErrorCode::NOT_CONNECTED, "FlexivArm: not connected");
-    return robot_->stopped();
+    if (!nrt_active_.load()) return true;
+    // Grace period: the arm needs ~200ms to start moving before stopped() goes false.
+    if (std::chrono::steady_clock::now() - nrt_send_time_ < kNrtStartDelay) return false;
+    if (!robot_->stopped()) return false;
+    // Motion complete — restore RT streaming mode so the HW interface write() loop resumes.
+    restore_rt_mode_locked();
+    nrt_active_ = false;
+    return true;
 }
 
 Expected<void> FlexivArm::start_streaming(StreamMode mode) {
@@ -213,7 +213,7 @@ Expected<void> FlexivArm::start_streaming(StreamMode mode) {
     }
 #endif
     try {
-        stream_mode_ = mode;
+        intended_rt_mode_ = mode;
         switch (mode) {
             case StreamMode::JOINT_POSITION:
                 robot_->SwitchMode(flexiv::rdk::Mode::RT_JOINT_POSITION);
@@ -268,12 +268,35 @@ Expected<void> FlexivArm::stop_streaming() {
 Expected<void> FlexivArm::set_tool(const ToolInfo& tool) {
     if (!robot_) return make_error(ErrorCode::NOT_CONNECTED, "FlexivArm: not connected");
     try {
-        (void)tool;
+        cached_tool_ = tool;
+        // Tool changes require IDLE mode. Briefly pause RT streaming.
+        nrt_active_ = true;
+        robot_->SwitchMode(flexiv::rdk::Mode::IDLE);
+        flexiv::rdk::Tool rdk_tool(*robot_);
+        flexiv::rdk::ToolParams tp;
+        tp.mass = tool.mass_kg;
+        tp.CoM  = tool.com;
+        tp.inertia = tool.inertia;
+        tp.tcp_location = tool.tcp_pose;
+        if (rdk_tool.exist(kManagedToolName)) {
+            rdk_tool.Update(kManagedToolName, tp);
+        } else {
+            rdk_tool.Add(kManagedToolName, tp);
+        }
+        rdk_tool.Switch(kManagedToolName);
+        restore_rt_mode_locked();
+        nrt_active_ = false;
+        spdlog::info("FlexivArm: tool applied (mass={:.3f} kg)", tool.mass_kg);
         return {};
     } catch (const std::exception& e) {
+        nrt_active_ = false;
         return make_error(ErrorCode::SDK_EXCEPTION,
             std::string("FlexivArm::set_tool failed: ") + e.what());
     }
+}
+
+Expected<ToolInfo> FlexivArm::get_tool() const {
+    return cached_tool_;
 }
 
 Expected<void> FlexivArm::zero_ft_sensor() {
@@ -293,6 +316,34 @@ std::vector<std::string> FlexivArm::supported_features() const {
 }
 
 // ForceControllable
+Expected<void> FlexivArm::move_hybrid_motion_force(
+    const CartesianTarget& pose_target,
+    const std::array<double, 6>& wrench_setpoint,
+    const MotionParams& params)
+{
+    if (!robot_) return make_error(ErrorCode::NOT_CONNECTED, "FlexivArm: not connected");
+    try {
+        robot_->Stop();
+        robot_->SwitchMode(flexiv::rdk::Mode::NRT_CARTESIAN_MOTION_FORCE);
+        nrt_active_ = true;
+        // Axis selection and frame must be configured beforehand via set_force_control_axis /
+        // set_force_control_frame / set_passive_force_control.
+        robot_->SendCartesianMotionForce(
+            pose_target.pose,
+            wrench_setpoint,
+            {},
+            params.max_linear_vel,
+            params.max_angular_vel,
+            params.max_linear_acc);
+        nrt_send_time_ = std::chrono::steady_clock::now();
+        return {};
+    } catch (const std::exception& e) {
+        nrt_active_ = false;
+        return make_error(ErrorCode::MOTION_FAILED,
+            std::string("FlexivArm::move_hybrid_motion_force failed: ") + e.what());
+    }
+}
+
 Expected<void> FlexivArm::set_force_control_axis(const ForceAxisConfig& config) {
     if (!robot_) return make_error(ErrorCode::NOT_CONNECTED, "FlexivArm: not connected");
     try {

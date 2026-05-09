@@ -48,7 +48,19 @@ controller_interface::CallbackReturn CynlrDirectCommandController::on_activate(
     // (command_interfaces_ are now valid — read initial positions from state_interfaces_)
     cynlr_arm_interfaces::msg::JointCommand init_cmd{};
     for (int i = 0; i < kDOF; ++i) {
-        init_cmd.joint_position[i] = state_interfaces_[i].get_value();
+        auto value = state_interfaces_[i].get_optional();
+
+        if (!value.has_value())
+        {
+            RCLCPP_ERROR(
+                get_node()->get_logger(),
+                "Failed to read state interface %d",
+                i);
+
+            return controller_interface::CallbackReturn::ERROR;
+        }
+
+        init_cmd.joint_position[i] = *value;
         init_cmd.joint_velocity[i] = 0.0;
     }
     cmd_buf_.writeFromNonRT(init_cmd);
@@ -91,8 +103,8 @@ controller_interface::return_type CynlrDirectCommandController::update(
 
     // command_interfaces_ layout: [pos_0, vel_0, pos_1, vel_1, ..., pos_6, vel_6]
     for (int i = 0; i < kDOF; ++i) {
-        command_interfaces_[i * 2].set_value(cmd->joint_position[i]);
-        command_interfaces_[i * 2 + 1].set_value(cmd->joint_velocity[i]);
+        (void)command_interfaces_[i * 2].set_value(cmd->joint_position[i]);
+        (void)command_interfaces_[i * 2 + 1].set_value(cmd->joint_velocity[i]);
     }
 
     return controller_interface::return_type::OK;

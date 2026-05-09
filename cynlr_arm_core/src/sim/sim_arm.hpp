@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -27,10 +28,14 @@ public:
     Expected<void> move_j(const JointTarget& target, const MotionParams& params) override;
     Expected<void> move_ptp(const CartesianTarget& target, const MotionParams& params) override;
     Expected<bool> is_motion_complete() override;
+    bool nrt_active() const override { return nrt_active_.load(); }
     Expected<void> start_streaming(StreamMode mode) override;
     Expected<void> stream_command(const StreamCommand& cmd) override;
     Expected<void> stop_streaming() override;
+    void set_intended_rt_mode(StreamMode mode) override { intended_rt_mode_ = mode; }
     Expected<void> set_tool(const ToolInfo& tool) override;
+    Expected<void> update_tool(const ToolInfo& tool) override { return set_tool(tool); }
+    Expected<ToolInfo> get_tool() const override;
     Expected<void> zero_ft_sensor() override;
     std::vector<std::string> supported_features() const override;
 
@@ -38,6 +43,10 @@ public:
     Expected<void> set_force_control_axis(const ForceAxisConfig& config) override;
     Expected<void> set_force_control_frame(const CartesianPose& frame) override;
     Expected<void> set_passive_force_control(bool enable) override;
+    Expected<void> move_hybrid_motion_force(
+        const CartesianTarget& pose_target,
+        const std::array<double, 6>& wrench_setpoint,
+        const MotionParams& params) override;
 
     // NullSpaceConfigurable
     Expected<void> set_null_space_posture(const JointState& posture) override;
@@ -62,6 +71,9 @@ private:
     double noise_stddev_{0.0};
     double latency_ms_{0.0};
     StreamMode stream_mode_{StreamMode::JOINT_POSITION};
+    StreamMode intended_rt_mode_{StreamMode::JOINT_POSITION};
+    std::atomic<bool> nrt_active_{false};
+    ToolInfo cached_tool_{};
     std::mt19937 rng_{std::random_device{}()};
 };
 

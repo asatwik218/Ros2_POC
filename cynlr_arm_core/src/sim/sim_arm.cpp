@@ -43,6 +43,7 @@ Expected<void> SimArm::stop() {
     std::lock_guard lock(state_mutex_);
     streaming_ = false;
     motion_complete_ = true;
+    nrt_active_ = false;
     return {};
 }
 
@@ -101,6 +102,7 @@ Expected<void> SimArm::move_l(const CartesianTarget& target, const MotionParams&
     if (!enabled_) return make_error(ErrorCode::NOT_ENABLED, "SimArm: not enabled");
     state_.tcp_pose = target.pose;
     motion_complete_ = false;
+    nrt_active_ = true;
     motion_start_ = std::chrono::steady_clock::now();
     return {};
 }
@@ -110,6 +112,7 @@ Expected<void> SimArm::move_j(const JointTarget& target, const MotionParams&) {
     if (!enabled_) return make_error(ErrorCode::NOT_ENABLED, "SimArm: not enabled");
     state_.joint_positions = target.positions;
     motion_complete_ = false;
+    nrt_active_ = true;
     motion_start_ = std::chrono::steady_clock::now();
     return {};
 }
@@ -119,6 +122,7 @@ Expected<void> SimArm::move_ptp(const CartesianTarget& target, const MotionParam
     if (!enabled_) return make_error(ErrorCode::NOT_ENABLED, "SimArm: not enabled");
     state_.tcp_pose = target.pose;
     motion_complete_ = false;
+    nrt_active_ = true;
     motion_start_ = std::chrono::steady_clock::now();
     return {};
 }
@@ -128,6 +132,7 @@ Expected<bool> SimArm::is_motion_complete() {
     if (!motion_complete_ &&
         std::chrono::steady_clock::now() >= motion_start_ + motion_delay_) {
         motion_complete_ = true;
+        nrt_active_ = false;
     }
     return motion_complete_;
 }
@@ -164,8 +169,15 @@ Expected<void> SimArm::stop_streaming() {
     return {};
 }
 
-Expected<void> SimArm::set_tool(const ToolInfo&) {
-    return {};  // No-op in sim
+Expected<void> SimArm::set_tool(const ToolInfo& tool) {
+    std::lock_guard lock(state_mutex_);
+    cached_tool_ = tool;
+    return {};
+}
+
+Expected<ToolInfo> SimArm::get_tool() const {
+    std::lock_guard lock(state_mutex_);
+    return cached_tool_;
 }
 
 Expected<void> SimArm::zero_ft_sensor() {
@@ -182,6 +194,20 @@ std::vector<std::string> SimArm::supported_features() const {
 Expected<void> SimArm::set_force_control_axis(const ForceAxisConfig&) { return {}; }
 Expected<void> SimArm::set_force_control_frame(const CartesianPose&) { return {}; }
 Expected<void> SimArm::set_passive_force_control(bool) { return {}; }
+
+Expected<void> SimArm::move_hybrid_motion_force(
+    const CartesianTarget& pose_target,
+    const std::array<double, 6>&,  // wrench_setpoint ignored in sim (no contact model)
+    const MotionParams&)
+{
+    std::lock_guard lock(state_mutex_);
+    if (!enabled_) return make_error(ErrorCode::NOT_ENABLED, "SimArm: not enabled");
+    state_.tcp_pose = pose_target.pose;
+    motion_complete_ = false;
+    nrt_active_ = true;
+    motion_start_ = std::chrono::steady_clock::now();
+    return {};
+}
 
 // NullSpaceConfigurable
 Expected<void> SimArm::set_null_space_posture(const JointState&) { return {}; }

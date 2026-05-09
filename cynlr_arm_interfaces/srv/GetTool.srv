@@ -1,0 +1,7 @@
+---
+bool success
+string message
+float64 mass_kg
+float64[3] com
+float64[6] inertia
+float64[7] tcp_pose

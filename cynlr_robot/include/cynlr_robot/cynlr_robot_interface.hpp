@@ -95,8 +95,11 @@ private:
     // Pending transitions set by prepare, applied by perform
     ActiveMode pending_start_{ActiveMode::NONE};
     bool       pending_stop_{false};
-    // Tracks NRT active flag edge so cmd_pos_ can be reseeded on NRT→RT transition
+    // Tracks NRT active flag edge so cmd_pos_/cmd_cart_/cmd_eff_ can be reseeded
     bool       prev_nrt_active_{false};
+    // The RT StreamMode corresponding to active_mode_ — passed to the arm so it
+    // can restore the correct mode after NRT motions complete.
+    cynlr::arm::StreamMode intended_rt_mode_{cynlr::arm::StreamMode::JOINT_POSITION};
 
     std::string prefix_; // e.g. "arm_left_"
 

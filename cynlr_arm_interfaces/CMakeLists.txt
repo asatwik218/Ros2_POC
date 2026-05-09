@@ -20,6 +20,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SetDigitalOutputs.srv"
   "srv/GetDigitalInputs.srv"
   "srv/SwitchController.srv"
+  "srv/GetTool.srv"
+  "srv/IsMotionRunning.srv"
   "action/MoveL.action"
   "action/MoveJ.action"
   "action/MovePTP.action"
