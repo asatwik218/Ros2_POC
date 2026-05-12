@@ -16,10 +16,24 @@
       <output_port name="current_positions" type="std::array<double,7>"/>
     </Action>
 
-    <Action ID="RegisterRobot">
-      <input_port name="robot_sn" type="string"/>
-      <output_port name="robot_sn" type="string"/>
+    <!-- connect the robots -->
+    <!-- use the robot_prefix to send command to the relevant service -->
+    <!-- make the connect robot trigger -->
+    <Action ID="ConnectRobot">
+      <input_port name="robot_prefix" type="string" default="left"/>
+      <output_port name="success" type="bool"/>
     </Action>
+
+    <Action ID="EnableRobot">
+      <input_port name="robot_prefix" type="string" default="left"/>
+      <output_port name="success" type="bool"/>
+    </Action>
+
+    <Action ID="DisconnectRobot">
+      <input_port name="robot_prefix" type="string" default="left"/>
+      <output_port name="success" type="bool"/>
+    </Action>
+
   </TreeNodesModel>
 
 </root>
